@@ -32,16 +32,19 @@ export const INDEX_VERSION = 2;
 
 /** Whether this book is in this reader's library — the check every book-scoped
  *  route makes before it touches anything derived from the text. */
-export function ownsBook(userId: number, bookId: number): boolean {
+export async function ownsBook(userId: number, bookId: number): Promise<boolean> {
+  const db = await getDb();
   return Boolean(
-    getDb().prepare("SELECT 1 AS ok FROM books WHERE id = ? AND user_id = ?").get(bookId, userId),
+    await db.get("SELECT 1 AS ok FROM books WHERE id = ? AND user_id = ?", bookId, userId),
   );
 }
 
-export function isIndexed(bookId: number): boolean {
-  const row = getDb()
-    .prepare("SELECT version FROM book_index WHERE book_id = ?")
-    .get(bookId) as { version: number } | undefined;
+export async function isIndexed(bookId: number): Promise<boolean> {
+  const db = await getDb();
+  const row = await db.get<{ version: number }>(
+    "SELECT version FROM book_index WHERE book_id = ?",
+    bookId,
+  );
   return row?.version === INDEX_VERSION;
 }
 
@@ -53,11 +56,12 @@ export function isIndexed(bookId: number): boolean {
  * a text containing "loved" almost certainly contains "love" too, which is what
  * settles the "lov" / "love" ambiguity that suffix rules alone cannot.
  */
-export function indexBook(bookId: number): { tokens: number; lemmas: number } {
-  const db = getDb();
-  const chapters = db
-    .prepare("SELECT idx, title, html FROM chapters WHERE book_id = ? ORDER BY idx")
-    .all(bookId) as { idx: number; title: string; html: string }[];
+export async function indexBook(bookId: number): Promise<{ tokens: number; lemmas: number }> {
+  const db = await getDb();
+  const chapters = await db.all<{ idx: number; title: string; html: string }>(
+    "SELECT idx, title, html FROM chapters WHERE book_id = ? ORDER BY idx",
+    bookId,
+  );
 
   const texts = chapters.map((c) => htmlToText(c.html));
   const perChapterTokens = texts.map(tokenize);
@@ -80,38 +84,43 @@ export function indexBook(bookId: number): { tokens: number; lemmas: number } {
     }
   }
 
-  db.exec("BEGIN");
-  try {
-    db.prepare("DELETE FROM book_words WHERE book_id = ?").run(bookId);
-    const insertWord = db.prepare(
-      "INSERT INTO book_words (book_id, lemma, count) VALUES (?, ?, ?)",
-    );
-    for (const [base, count] of counts) insertWord.run(bookId, base, count);
+  // One statement per distinct word, which is why this goes out in batches
+  // rather than a loop: see `batch` in lib/db.ts. The deletes lead the batch so
+  // that a re-index replaces the old rows inside the same transaction.
+  const writes: { sql: string; args?: unknown[] }[] = [
+    { sql: "DELETE FROM book_words WHERE book_id = ?", args: [bookId] },
+    { sql: "DELETE FROM chapters_fts WHERE book_id = ?", args: [bookId] },
+  ];
 
-    db.prepare("DELETE FROM chapters_fts WHERE book_id = ?").run(bookId);
-    const insertFts = db.prepare(
-      "INSERT INTO chapters_fts (body, title, book_id, idx) VALUES (?, ?, ?, ?)",
-    );
-    chapters.forEach((c, i) => insertFts.run(texts[i], c.title, bookId, c.idx));
-
-    db.prepare(
-      `INSERT INTO book_index (book_id, indexed_at, tokens, lemmas, version) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(book_id) DO UPDATE SET
-         indexed_at = excluded.indexed_at, tokens = excluded.tokens,
-         lemmas = excluded.lemmas, version = excluded.version`,
-    ).run(bookId, Date.now(), total, counts.size, INDEX_VERSION);
-
-    db.exec("COMMIT");
-  } catch (err) {
-    db.exec("ROLLBACK");
-    throw err;
+  for (const [base, count] of counts) {
+    writes.push({
+      sql: "INSERT INTO book_words (book_id, lemma, count) VALUES (?, ?, ?)",
+      args: [bookId, base, count],
+    });
   }
+
+  chapters.forEach((c, i) => {
+    writes.push({
+      sql: "INSERT INTO chapters_fts (body, title, book_id, idx) VALUES (?, ?, ?, ?)",
+      args: [texts[i], c.title, bookId, c.idx],
+    });
+  });
+
+  writes.push({
+    sql: `INSERT INTO book_index (book_id, indexed_at, tokens, lemmas, version) VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(book_id) DO UPDATE SET
+            indexed_at = excluded.indexed_at, tokens = excluded.tokens,
+            lemmas = excluded.lemmas, version = excluded.version`,
+    args: [bookId, Date.now(), total, counts.size, INDEX_VERSION],
+  });
+
+  await db.batch(writes);
 
   return { tokens: total, lemmas: counts.size };
 }
 
-export function ensureIndexed(bookId: number): void {
-  if (!isIndexed(bookId)) indexBook(bookId);
+export async function ensureIndexed(bookId: number): Promise<void> {
+  if (!(await isIndexed(bookId))) await indexBook(bookId);
 }
 
 /**
@@ -120,20 +129,22 @@ export function ensureIndexed(bookId: number): void {
  * is a one-off cost per book, but a library imported in bulk should not make
  * one page load carry all of it.
  */
-export function indexPending(userId: number, limit = 20): number {
-  const stale = getDb()
-    .prepare(
-      `SELECT b.id FROM books b
-         LEFT JOIN book_index bi ON bi.book_id = b.id
-        WHERE b.user_id = ? AND (bi.book_id IS NULL OR bi.version <> ?)
-        ORDER BY b.created_at DESC
-        LIMIT ?`,
-    )
-    .all(userId, INDEX_VERSION, limit) as { id: number }[];
+export async function indexPending(userId: number, limit = 20): Promise<number> {
+  const db = await getDb();
+  const stale = await db.all<{ id: number }>(
+    `SELECT b.id FROM books b
+       LEFT JOIN book_index bi ON bi.book_id = b.id
+      WHERE b.user_id = ? AND (bi.book_id IS NULL OR bi.version <> ?)
+      ORDER BY b.created_at DESC
+      LIMIT ?`,
+    userId,
+    INDEX_VERSION,
+    limit,
+  );
 
   for (const { id } of stale) {
     try {
-      indexBook(id);
+      await indexBook(id);
     } catch {
       /* a book that will not index must not take the library down with it */
     }
@@ -143,53 +154,60 @@ export function indexPending(userId: number, limit = 20): number {
 
 /* ------------------------------ known words ------------------------------ */
 
-export function knownCount(userId: number): number {
-  return (
-    getDb().prepare("SELECT COUNT(*) AS n FROM known_words WHERE user_id = ?").get(userId) as {
-      n: number;
-    }
-  ).n;
+export async function knownCount(userId: number): Promise<number> {
+  const db = await getDb();
+  const row = await db.get<{ n: number }>(
+    "SELECT COUNT(*) AS n FROM known_words WHERE user_id = ?",
+    userId,
+  );
+  return row?.n ?? 0;
 }
 
-export function isKnown(userId: number, lemmas: string[]): Set<string> {
+export async function isKnown(userId: number, lemmas: string[]): Promise<Set<string>> {
   if (!lemmas.length) return new Set();
+  const db = await getDb();
   const placeholders = lemmas.map(() => "?").join(",");
-  const rows = getDb()
-    .prepare(`SELECT lemma FROM known_words WHERE user_id = ? AND lemma IN (${placeholders})`)
-    .all(userId, ...lemmas) as { lemma: string }[];
+  const rows = await db.all<{ lemma: string }>(
+    `SELECT lemma FROM known_words WHERE user_id = ? AND lemma IN (${placeholders})`,
+    userId,
+    ...lemmas,
+  );
   return new Set(rows.map((r) => r.lemma));
 }
 
-export function markKnown(
+export async function markKnown(
   userId: number,
   lemmas: string[],
   source: "manual" | "seed" = "manual",
-): number {
-  const db = getDb();
-  const stmt = db.prepare(
-    `INSERT INTO known_words (user_id, lemma, source, created_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT(user_id, lemma) DO NOTHING`,
+): Promise<number> {
+  const db = await getDb();
+
+  // Accepting a seed preset marks thousands of words at once, so this is a
+  // batch for the same reason indexing is.
+  const clean = [...new Set(lemmas.map((l) => l.trim().toLowerCase()).filter(Boolean))];
+  if (!clean.length) return 0;
+
+  const before = await knownCount(userId);
+  await db.batch(
+    clean.map((l) => ({
+      sql: `INSERT INTO known_words (user_id, lemma, source, created_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, lemma) DO NOTHING`,
+      args: [userId, l, source, Date.now()],
+    })),
   );
-  let added = 0;
-  db.exec("BEGIN");
-  try {
-    for (const raw of lemmas) {
-      const l = raw.trim().toLowerCase();
-      if (!l) continue;
-      added += Number(stmt.run(userId, l, source, Date.now()).changes);
-    }
-    db.exec("COMMIT");
-  } catch (err) {
-    db.exec("ROLLBACK");
-    throw err;
-  }
-  return added;
+
+  // A batch reports rows affected per statement rather than in total, and the
+  // conflicts are meant to be silent, so the count is taken by difference.
+  return (await knownCount(userId)) - before;
 }
 
-export function unmarkKnown(userId: number, lemmaText: string): void {
-  getDb()
-    .prepare("DELETE FROM known_words WHERE user_id = ? AND lemma = ?")
-    .run(userId, lemmaText.trim().toLowerCase());
+export async function unmarkKnown(userId: number, lemmaText: string): Promise<void> {
+  const db = await getDb();
+  await db.run(
+    "DELETE FROM known_words WHERE user_id = ? AND lemma = ?",
+    userId,
+    lemmaText.trim().toLowerCase(),
+  );
 }
 
 /**
@@ -197,26 +215,28 @@ export function unmarkKnown(userId: number, lemmaText: string): void {
  * presets — a reader who accepted the wrong preset should not have to unpick it
  * one word at a time, nor lose the words they marked by hand.
  */
-export function clearKnown(userId: number, source?: "seed" | "manual"): number {
+export async function clearKnown(userId: number, source?: "seed" | "manual"): Promise<number> {
+  const db = await getDb();
   const result = source
-    ? getDb().prepare("DELETE FROM known_words WHERE user_id = ? AND source = ?").run(userId, source)
-    : getDb().prepare("DELETE FROM known_words WHERE user_id = ?").run(userId);
+    ? await db.run("DELETE FROM known_words WHERE user_id = ? AND source = ?", userId, source)
+    : await db.run("DELETE FROM known_words WHERE user_id = ?", userId);
   return Number(result.changes);
 }
 
 /** Accept the first `count` words of the common-word seed list as known. */
-export function seedCoreWords(userId: number, count: number): number {
+export async function seedCoreWords(userId: number, count: number): Promise<number> {
   const n = Math.max(0, Math.min(count, CORE_WORDS.length));
   return markKnown(userId, CORE_WORDS.slice(0, n), "seed");
 }
 
 /** Every known lemma, for the reader to dim as it renders. */
-export function allKnownLemmas(userId: number): string[] {
-  return (
-    getDb().prepare("SELECT lemma FROM known_words WHERE user_id = ?").all(userId) as {
-      lemma: string;
-    }[]
-  ).map((r) => r.lemma);
+export async function allKnownLemmas(userId: number): Promise<string[]> {
+  const db = await getDb();
+  const rows = await db.all<{ lemma: string }>(
+    "SELECT lemma FROM known_words WHERE user_id = ?",
+    userId,
+  );
+  return rows.map((r) => r.lemma);
 }
 
 /* -------------------------------- coverage -------------------------------- */
@@ -229,36 +249,39 @@ export type Coverage = {
   unknownLemmas: number;
 };
 
-export function bookCoverage(userId: number, bookId: number): Coverage {
-  ensureIndexed(bookId);
-  const db = getDb();
+export async function bookCoverage(userId: number, bookId: number): Promise<Coverage> {
+  await ensureIndexed(bookId);
+  const db = await getDb();
 
-  const idx = db.prepare("SELECT tokens, lemmas FROM book_index WHERE book_id = ?").get(bookId) as
-    | { tokens: number; lemmas: number }
-    | undefined;
+  const idx = await db.get<{ tokens: number; lemmas: number }>(
+    "SELECT tokens, lemmas FROM book_index WHERE book_id = ?",
+    bookId,
+  );
   const tokens = idx?.tokens ?? 0;
 
-  const known = (
-    db
-      .prepare(
+  const known =
+    (
+      await db.get<{ n: number }>(
         `SELECT COALESCE(SUM(bw.count), 0) AS n
            FROM book_words bw
            JOIN known_words k ON k.lemma = bw.lemma AND k.user_id = ?
           WHERE bw.book_id = ?`,
+        userId,
+        bookId,
       )
-      .get(userId, bookId) as { n: number }
-  ).n;
+    )?.n ?? 0;
 
-  const unknownLemmas = (
-    db
-      .prepare(
+  const unknownLemmas =
+    (
+      await db.get<{ n: number }>(
         `SELECT COUNT(*) AS n
            FROM book_words bw
            LEFT JOIN known_words k ON k.lemma = bw.lemma AND k.user_id = ?
           WHERE bw.book_id = ? AND k.lemma IS NULL`,
+        userId,
+        bookId,
       )
-      .get(userId, bookId) as { n: number }
-  ).n;
+    )?.n ?? 0;
 
   return {
     tokens,
@@ -270,10 +293,10 @@ export function bookCoverage(userId: number, bookId: number): Coverage {
 }
 
 /** Coverage for every indexed book at once, for the library shelf. */
-export function coverageByBook(userId: number): Map<number, number> {
-  const rows = getDb()
-    .prepare(
-      `SELECT bi.book_id,
+export async function coverageByBook(userId: number): Promise<Map<number, number>> {
+  const db = await getDb();
+  const rows = await db.all<{ book_id: number; tokens: number; known: number }>(
+    `SELECT bi.book_id,
               bi.tokens,
               COALESCE((SELECT SUM(bw.count)
                           FROM book_words bw
@@ -282,8 +305,8 @@ export function coverageByBook(userId: number): Map<number, number> {
          FROM book_index bi
          JOIN books b ON b.id = bi.book_id
         WHERE b.user_id = ?`,
-    )
-    .all(userId) as { book_id: number; tokens: number; known: number }[];
+    userId,
+  );
 
   const out = new Map<number, number>();
   for (const r of rows) {
@@ -298,12 +321,16 @@ export type UnknownWord = { lemma: string; count: number; saved: number };
  * The words you do not know yet, commonest first — the study list for a book.
  * `saved` flags the ones already in your vocabulary.
  */
-export function unknownWords(userId: number, bookId: number, limit = 50): UnknownWord[] {
-  ensureIndexed(bookId);
+export async function unknownWords(
+  userId: number,
+  bookId: number,
+  limit = 50,
+): Promise<UnknownWord[]> {
+  await ensureIndexed(bookId);
+  const db = await getDb();
   return plainAll(
-    getDb()
-      .prepare(
-        `SELECT bw.lemma,
+    await db.all<UnknownWord>(
+      `SELECT bw.lemma,
                 bw.count,
                 EXISTS (SELECT 1 FROM vocab v
                          WHERE v.user_id = ?
@@ -313,20 +340,29 @@ export function unknownWords(userId: number, bookId: number, limit = 50): Unknow
           WHERE bw.book_id = ? AND k.lemma IS NULL AND LENGTH(bw.lemma) > 2
           ORDER BY bw.count DESC, bw.lemma
           LIMIT ?`,
-      )
-      .all(userId, userId, bookId, limit) as UnknownWord[],
+      userId,
+      userId,
+      bookId,
+      limit,
+    ),
   );
 }
 
 /** How often a lemma occurs in one book — shown in the translation card. */
-export function occurrencesInBook(userId: number, bookId: number, word: string): number {
-  const row = getDb()
-    .prepare(
-      `SELECT bw.count FROM book_words bw
-         JOIN books b ON b.id = bw.book_id
-        WHERE bw.book_id = ? AND bw.lemma = ? AND b.user_id = ?`,
-    )
-    .get(bookId, lemma(word), userId) as { count: number } | undefined;
+export async function occurrencesInBook(
+  userId: number,
+  bookId: number,
+  word: string,
+): Promise<number> {
+  const db = await getDb();
+  const row = await db.get<{ count: number }>(
+    `SELECT bw.count FROM book_words bw
+       JOIN books b ON b.id = bw.book_id
+      WHERE bw.book_id = ? AND bw.lemma = ? AND b.user_id = ?`,
+    bookId,
+    lemma(word),
+    userId,
+  );
   return row?.count ?? 0;
 }
 
@@ -364,25 +400,34 @@ function escapeSnippet(s: string): string {
     .join("</mark>");
 }
 
-export function searchBook(userId: number, bookId: number, query: string, limit = 40): SearchHit[] {
+export async function searchBook(
+  userId: number,
+  bookId: number,
+  query: string,
+  limit = 40,
+): Promise<SearchHit[]> {
   const match = ftsQuery(query);
   if (!match) return [];
   // chapters_fts is a virtual table with no foreign key to hang ownership on,
   // so the book has to be vouched for before it is searched.
-  if (!ownsBook(userId, bookId)) return [];
-  ensureIndexed(bookId);
+  if (!(await ownsBook(userId, bookId))) return [];
+  await ensureIndexed(bookId);
 
-  const rows = getDb()
-    .prepare(
-      `SELECT idx,
-              title,
-              snippet(chapters_fts, 0, ?, ?, '…', 14) AS snippet
-         FROM chapters_fts
-        WHERE book_id = ? AND chapters_fts MATCH ?
-        ORDER BY rank
-        LIMIT ?`,
-    )
-    .all(OPEN, CLOSE, bookId, match, limit) as SearchHit[];
+  const db = await getDb();
+  const rows = await db.all<SearchHit>(
+    `SELECT idx,
+            title,
+            snippet(chapters_fts, 0, ?, ?, '…', 14) AS snippet
+       FROM chapters_fts
+      WHERE book_id = ? AND chapters_fts MATCH ?
+      ORDER BY rank
+      LIMIT ?`,
+    OPEN,
+    CLOSE,
+    bookId,
+    match,
+    limit,
+  );
 
   return rows.map((r) => ({ ...r, snippet: escapeSnippet(r.snippet) }));
 }

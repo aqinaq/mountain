@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { getDb } from "./db";
+import { getDb, type Db } from "./db";
 import { SESSION_COOKIE } from "./session-cookie";
 
 /**
@@ -36,16 +36,17 @@ export async function currentUserId(): Promise<number | null> {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) return null;
 
-  const db = getDb();
+  const db = await getDb();
   const hash = hashToken(token);
 
-  const existing = db.prepare("SELECT id, last_seen_at FROM users WHERE token_hash = ?").get(hash) as
-    | { id: number; last_seen_at: number }
-    | undefined;
+  const existing = await db.get<{ id: number; last_seen_at: number }>(
+    "SELECT id, last_seen_at FROM users WHERE token_hash = ?",
+    hash,
+  );
   if (existing) {
     const now = Date.now();
     if (now - existing.last_seen_at > LAST_SEEN_RESOLUTION) {
-      db.prepare("UPDATE users SET last_seen_at = ? WHERE id = ?").run(now, existing.id);
+      await db.run("UPDATE users SET last_seen_at = ? WHERE id = ?", now, existing.id);
     }
     return existing.id;
   }
@@ -54,17 +55,21 @@ export async function currentUserId(): Promise<number | null> {
 }
 
 /** Open a new account for a token we have not seen before. */
-function createUser(db: ReturnType<typeof getDb>, hash: string): number {
+async function createUser(db: Db, hash: string): Promise<number> {
   const now = Date.now();
   // ON CONFLICT rather than a bare INSERT: two requests can arrive carrying the
   // same brand-new cookie, and the loser of that race should find the winner's
   // account rather than fail.
-  db.prepare(
+  await db.run(
     `INSERT INTO users (token_hash, claim_code, email, created_at, last_seen_at) VALUES (?, NULL, NULL, ?, ?)
      ON CONFLICT(token_hash) DO NOTHING`,
-  ).run(hash, now, now);
+    hash,
+    now,
+    now,
+  );
 
-  return (db.prepare("SELECT id FROM users WHERE token_hash = ?").get(hash) as { id: number }).id;
+  const created = await db.get<{ id: number }>("SELECT id FROM users WHERE token_hash = ?", hash);
+  return created!.id;
 }
 
 /**
@@ -79,48 +84,52 @@ export async function claimAccount(code: string): Promise<boolean> {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token || !code) return false;
 
-  const db = getDb();
+  const db = await getDb();
   const hash = hashToken(token);
 
-  const target = db
-    .prepare("SELECT id FROM users WHERE claim_code = ? AND token_hash IS NULL")
-    .get(code) as { id: number } | undefined;
+  const target = await db.get<{ id: number }>(
+    "SELECT id FROM users WHERE claim_code = ? AND token_hash IS NULL",
+    code,
+  );
   if (!target) return false;
 
   // Whatever account this browser is already holding is about to be let go of.
   // It is worth deleting only if nothing was ever put in it — otherwise the
   // reader would silently lose the words they saved before claiming.
-  const previous = db.prepare("SELECT id FROM users WHERE token_hash = ?").get(hash) as
-    | { id: number }
-    | undefined;
+  const previous = await db.get<{ id: number }>(
+    "SELECT id FROM users WHERE token_hash = ?",
+    hash,
+  );
 
-  db.exec("BEGIN");
+  await db.exec("BEGIN");
   try {
     if (previous && previous.id !== target.id) {
-      db.prepare("UPDATE users SET token_hash = NULL WHERE id = ?").run(previous.id);
-      if (isEmptyAccount(db, previous.id)) {
-        db.prepare("DELETE FROM users WHERE id = ?").run(previous.id);
+      await db.run("UPDATE users SET token_hash = NULL WHERE id = ?", previous.id);
+      if (await isEmptyAccount(db, previous.id)) {
+        await db.run("DELETE FROM users WHERE id = ?", previous.id);
       }
     }
     // The code is spent in the same transaction that grants the account, so it
     // cannot be replayed by anyone else who saw the log.
-    db.prepare(
+    await db.run(
       "UPDATE users SET token_hash = ?, claim_code = NULL, last_seen_at = ? WHERE id = ?",
-    ).run(hash, Date.now(), target.id);
-    db.exec("COMMIT");
+      hash,
+      Date.now(),
+      target.id,
+    );
+    await db.exec("COMMIT");
   } catch (err) {
-    db.exec("ROLLBACK");
+    await db.exec("ROLLBACK");
     throw err;
   }
   return true;
 }
 
 /** An account holding nothing at all, and so safe to drop on the floor. */
-function isEmptyAccount(db: ReturnType<typeof getDb>, userId: number): boolean {
+async function isEmptyAccount(db: Db, userId: number): Promise<boolean> {
   for (const table of ["books", "vocab", "known_words", "review_log"]) {
-    if (db.prepare(`SELECT 1 AS present FROM ${table} WHERE user_id = ? LIMIT 1`).get(userId)) {
-      return false;
-    }
+    const present = await db.get(`SELECT 1 AS present FROM ${table} WHERE user_id = ? LIMIT 1`, userId);
+    if (present) return false;
   }
   return true;
 }
