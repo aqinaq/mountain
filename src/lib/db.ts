@@ -3,7 +3,17 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-export const DATA_DIR = path.join(process.cwd(), "data");
+/**
+ * Where the library lives: the SQLite database and every uploaded book.
+ *
+ * The standalone server built for production does `process.chdir(__dirname)`,
+ * which would put this inside `.next/standalone` — thrown away and rebuilt on
+ * every deploy. So the location is overridable, and anything hosting this from
+ * outside the project directory is expected to say where the disk is.
+ */
+export const DATA_DIR = process.env.MOUNTAIN_DATA_DIR
+  ? path.resolve(process.env.MOUNTAIN_DATA_DIR)
+  : path.join(process.cwd(), "data");
 export const FILES_DIR = path.join(DATA_DIR, "files");
 
 fs.mkdirSync(FILES_DIR, { recursive: true });
