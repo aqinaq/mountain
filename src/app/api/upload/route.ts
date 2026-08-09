@@ -6,7 +6,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-const MAX_BYTES = 60 * 1024 * 1024;
+/**
+ * Vercel refuses a request body over 4.5 MB before this handler ever runs, and
+ * what it returns is a platform error page rather than anything the uploader
+ * can explain. So the limit is set below theirs, and the reader gets a sentence
+ * about the file instead of a wall of nothing.
+ */
+const MAX_BYTES = 4 * 1024 * 1024;
 
 export async function POST(req: Request) {
   const userId = await currentUserId();
