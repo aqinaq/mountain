@@ -48,37 +48,46 @@ export type DueCard = {
  * the sentence and can actually find the word in it; a phrase gets no cloze
  * either, since blanking the whole phrase leaves nothing to read.
  */
-export function ensureCards(vocabId: number): void {
-  const db = getDb();
-  const row = db
-    .prepare("SELECT term, context, kind, lemma, box, due_at FROM vocab WHERE id = ?")
-    .get(vocabId) as
-    | { term: string; context: string; kind: string; lemma: string; box: number; due_at: number }
-    | undefined;
+export async function ensureCards(vocabId: number): Promise<void> {
+  const db = await getDb();
+  const row = await db.get<{
+    term: string;
+    context: string;
+    kind: string;
+    lemma: string;
+    box: number;
+    due_at: number;
+  }>("SELECT term, context, kind, lemma, box, due_at FROM vocab WHERE id = ?", vocabId);
   if (!row) return;
 
   const wanted: CardType[] = ["recognize", "produce"];
   if (row.kind !== "phrase" && clozeFront(row.context, row.term, row.lemma)) wanted.push("cloze");
 
-  const insert = db.prepare(
-    `INSERT INTO cards (vocab_id, type, box, due_at, created_at) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(vocab_id, type) DO NOTHING`,
+  await db.batch(
+    wanted.map((type) => ({
+      sql: `INSERT INTO cards (vocab_id, type, box, due_at, created_at) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(vocab_id, type) DO NOTHING`,
+      // A pre-existing entry keeps whatever progress the old single-card
+      // schedule had, on the direction that schedule was actually testing.
+      args: [
+        vocabId,
+        type,
+        type === "recognize" ? Math.max(1, row.box) : 1,
+        type === "recognize" ? row.due_at : Date.now(),
+        Date.now(),
+      ],
+    })),
   );
-  for (const type of wanted) {
-    // A pre-existing entry keeps whatever progress the old single-card schedule
-    // had, on the direction that schedule was actually testing.
-    const box = type === "recognize" ? Math.max(1, row.box) : 1;
-    const dueAt = type === "recognize" ? row.due_at : Date.now();
-    insert.run(vocabId, type, box, dueAt, Date.now());
-  }
 }
 
 /** Give every vocabulary entry its cards — for rows saved before cards existed. */
-export function backfillCards(userId: number): void {
-  const ids = getDb()
-    .prepare("SELECT id FROM vocab WHERE user_id = ? AND id NOT IN (SELECT vocab_id FROM cards)")
-    .all(userId) as { id: number }[];
-  for (const { id } of ids) ensureCards(id);
+export async function backfillCards(userId: number): Promise<void> {
+  const db = await getDb();
+  const ids = await db.all<{ id: number }>(
+    "SELECT id FROM vocab WHERE user_id = ? AND id NOT IN (SELECT vocab_id FROM cards)",
+    userId,
+  );
+  for (const { id } of ids) await ensureCards(id);
 }
 
 /**
@@ -111,15 +120,19 @@ export function clozeFront(context: string, term: string, storedLemma?: string):
 /** Cards ready for review, oldest due first. Filter by type in SQL, not after
  *  the limit — otherwise a session of one card type comes back nearly empty
  *  whenever the other types happen to be due first. */
-export function dueCards(userId: number, limit = 40, type?: CardType | null): DueCard[] {
+export async function dueCards(
+  userId: number,
+  limit = 40,
+  type?: CardType | null,
+): Promise<DueCard[]> {
   const args: (string | number)[] = [userId, Date.now()];
   if (type) args.push(type);
   args.push(limit);
 
+  const db = await getDb();
   return plainAll(
-    getDb()
-      .prepare(
-        `SELECT c.id, c.vocab_id, c.type, c.box, c.due_at,
+    await db.all<DueCard>(
+      `SELECT c.id, c.vocab_id, c.type, c.box, c.due_at,
                 v.term, v.translation, v.context, v.lemma,
                 b.title AS book_title
            FROM cards c
@@ -128,22 +141,23 @@ export function dueCards(userId: number, limit = 40, type?: CardType | null): Du
           WHERE v.user_id = ? AND c.due_at <= ?${type ? " AND c.type = ?" : ""}
           ORDER BY c.due_at, c.id
           LIMIT ?`,
-      )
-      .all(...args) as DueCard[],
+      ...args,
+    ),
   );
 }
 
 export type DueBreakdown = { total: number; recognize: number; produce: number; cloze: number };
 
-export function dueBreakdown(userId: number): DueBreakdown {
-  const rows = getDb()
-    .prepare(
-      `SELECT c.type, COUNT(*) AS n
-         FROM cards c JOIN vocab v ON v.id = c.vocab_id
-        WHERE v.user_id = ? AND c.due_at <= ?
-        GROUP BY c.type`,
-    )
-    .all(userId, Date.now()) as { type: CardType; n: number }[];
+export async function dueBreakdown(userId: number): Promise<DueBreakdown> {
+  const db = await getDb();
+  const rows = await db.all<{ type: CardType; n: number }>(
+    `SELECT c.type, COUNT(*) AS n
+       FROM cards c JOIN vocab v ON v.id = c.vocab_id
+      WHERE v.user_id = ? AND c.due_at <= ?
+      GROUP BY c.type`,
+    userId,
+    Date.now(),
+  );
 
   const out: DueBreakdown = { total: 0, recognize: 0, produce: 0, cloze: 0 };
   for (const r of rows) {
@@ -157,40 +171,44 @@ export function dueBreakdown(userId: number): DueBreakdown {
  * Record an answer. A card that survives the top box is a word you know, so it
  * graduates into `known_words` and starts counting towards book coverage.
  */
-export function answerCard(
+export async function answerCard(
   userId: number,
   cardId: number,
   correct: boolean,
-): { box: number; dueAt: number } | null {
-  const db = getDb();
-  const card = db
-    .prepare(
-      `SELECT c.box, c.type, v.term, v.lemma
-         FROM cards c JOIN vocab v ON v.id = c.vocab_id
-        WHERE c.id = ? AND v.user_id = ?`,
-    )
-    .get(cardId, userId) as { box: number; type: CardType; term: string; lemma: string } | undefined;
+): Promise<{ box: number; dueAt: number } | null> {
+  const db = await getDb();
+  const card = await db.get<{ box: number; type: CardType; term: string; lemma: string }>(
+    `SELECT c.box, c.type, v.term, v.lemma
+       FROM cards c JOIN vocab v ON v.id = c.vocab_id
+      WHERE c.id = ? AND v.user_id = ?`,
+    cardId,
+    userId,
+  );
   if (!card) return null;
 
   const box = correct ? Math.min(MAX_BOX, card.box + 1) : 1;
   const dueAt = Date.now() + INTERVALS[box];
 
-  db.prepare(
-    `UPDATE cards
-        SET box = ?, due_at = ?, reps = reps + 1, lapses = lapses + ?
-      WHERE id = ?`,
-  ).run(box, dueAt, correct ? 0 : 1, cardId);
-
-  const day = dayKey();
-  db.prepare(
-    `INSERT INTO review_log (user_id, day, reviewed, correct) VALUES (?, ?, 1, ?)
-     ON CONFLICT(user_id, day) DO UPDATE SET
-       reviewed = reviewed + 1, correct = correct + excluded.correct`,
-  ).run(userId, day, correct ? 1 : 0);
+  // The answer and the day's tally belong together — a review counted but not
+  // rescheduled, or the other way round, is worse than neither.
+  await db.batch([
+    {
+      sql: `UPDATE cards
+              SET box = ?, due_at = ?, reps = reps + 1, lapses = lapses + ?
+            WHERE id = ?`,
+      args: [box, dueAt, correct ? 0 : 1, cardId],
+    },
+    {
+      sql: `INSERT INTO review_log (user_id, day, reviewed, correct) VALUES (?, ?, 1, ?)
+            ON CONFLICT(user_id, day) DO UPDATE SET
+              reviewed = reviewed + 1, correct = correct + excluded.correct`,
+      args: [userId, dayKey(), correct ? 1 : 0],
+    },
+  ]);
 
   if (correct && card.box >= MAX_BOX) {
     const base = card.lemma || lemma(card.term);
-    if (base && !base.includes(" ")) markKnown(userId, [base]);
+    if (base && !base.includes(" ")) await markKnown(userId, [base]);
   }
 
   return { box, dueAt };

@@ -8,16 +8,19 @@ import { dayKey, getDb, plainAll } from "./db";
 
 /** Add time to today's total for a book. Clamped so one heartbeat cannot inflate it.
  *  reading_log is scoped through the book, so an unowned book logs nothing. */
-export function logReading(userId: number, bookId: number, seconds: number): void {
+export async function logReading(userId: number, bookId: number, seconds: number): Promise<void> {
   const secs = Math.max(0, Math.min(120, Math.round(seconds)));
   if (!secs) return;
-  getDb()
-    .prepare(
-      `INSERT INTO reading_log (day, book_id, seconds)
-       SELECT ?, id, ? FROM books WHERE id = ? AND user_id = ?
-       ON CONFLICT(day, book_id) DO UPDATE SET seconds = seconds + excluded.seconds`,
-    )
-    .run(dayKey(), secs, bookId, userId);
+  const db = await getDb();
+  await db.run(
+    `INSERT INTO reading_log (day, book_id, seconds)
+     SELECT ?, id, ? FROM books WHERE id = ? AND user_id = ?
+     ON CONFLICT(day, book_id) DO UPDATE SET seconds = seconds + excluded.seconds`,
+    dayKey(),
+    secs,
+    bookId,
+    userId,
+  );
 }
 
 export type DayStat = { day: string; seconds: number; reviewed: number; correct: number };
@@ -68,25 +71,23 @@ function streakFrom(active: Set<string>): { current: number; longest: number } {
   return { current, longest };
 }
 
-export function getStats(userId: number, windowDays = 84): Stats {
-  const db = getDb();
+export async function getStats(userId: number, windowDays = 84): Promise<Stats> {
+  const db = await getDb();
 
   const reading = plainAll(
-    db
-      .prepare(
-        `SELECT r.day, SUM(r.seconds) AS seconds
-           FROM reading_log r JOIN books b ON b.id = r.book_id
-          WHERE b.user_id = ?
-          GROUP BY r.day`,
-      )
-      .all(userId) as { day: string; seconds: number }[],
+    await db.all<{ day: string; seconds: number }>(
+      `SELECT r.day, SUM(r.seconds) AS seconds
+         FROM reading_log r JOIN books b ON b.id = r.book_id
+        WHERE b.user_id = ?
+        GROUP BY r.day`,
+      userId,
+    ),
   );
   const reviews = plainAll(
-    db.prepare("SELECT day, reviewed, correct FROM review_log WHERE user_id = ?").all(userId) as {
-      day: string;
-      reviewed: number;
-      correct: number;
-    }[],
+    await db.all<{ day: string; reviewed: number; correct: number }>(
+      "SELECT day, reviewed, correct FROM review_log WHERE user_id = ?",
+      userId,
+    ),
   );
 
   const byDay = new Map<string, DayStat>();
@@ -113,32 +114,28 @@ export function getStats(userId: number, windowDays = 84): Stats {
   );
   const { current, longest } = streakFrom(active);
 
-  const one = (sql: string, ...args: (string | number)[]) =>
-    (db.prepare(sql).get(...args) as { n: number } | undefined)?.n ?? 0;
+  const one = async (sql: string, ...args: (string | number)[]) =>
+    (await db.get<{ n: number }>(sql, ...args))?.n ?? 0;
 
-  return {
-    streak: current,
-    longestStreak: longest,
-    todaySeconds: byDay.get(today)?.seconds ?? 0,
-    totalSeconds: reading.reduce((sum, r) => sum + r.seconds, 0),
-    daysRead: active.size,
-    vocabTotal: one("SELECT COUNT(*) AS n FROM vocab WHERE user_id = ?", userId),
-    knownTotal: one("SELECT COUNT(*) AS n FROM known_words WHERE user_id = ?", userId),
-    dueTotal: one(
+  // Issued together rather than one after another: these are six independent
+  // round trips to a database that is no longer on this machine, and waiting
+  // for each in turn would show up as a visibly slow stats page.
+  const [vocabTotal, knownTotal, dueTotal, booksStarted, wordsRead] = await Promise.all([
+    one("SELECT COUNT(*) AS n FROM vocab WHERE user_id = ?", userId),
+    one("SELECT COUNT(*) AS n FROM known_words WHERE user_id = ?", userId),
+    one(
       `SELECT COUNT(*) AS n FROM cards c JOIN vocab v ON v.id = c.vocab_id
         WHERE v.user_id = ? AND c.due_at <= ?`,
       userId,
       Date.now(),
     ),
-    reviewedTotal: reviews.reduce((sum, r) => sum + r.reviewed, 0),
-    correctTotal: reviews.reduce((sum, r) => sum + r.correct, 0),
-    booksStarted: one(
+    one(
       `SELECT COUNT(*) AS n FROM progress p JOIN books b ON b.id = p.book_id
         WHERE b.user_id = ? AND (p.chapter_idx > 0 OR p.scroll_pct > 0)`,
       userId,
     ),
     // An estimate: pages actually turned, priced at the book's own word count.
-    wordsRead: one(
+    one(
       `SELECT COALESCE(CAST(SUM(b.word_count * MIN(1.0,
                 (p.chapter_idx + p.scroll_pct) * 1.0 /
                 MAX(1, (SELECT COUNT(*) FROM chapters c WHERE c.book_id = b.id)))) AS INTEGER), 0) AS n
@@ -146,6 +143,21 @@ export function getStats(userId: number, windowDays = 84): Stats {
         WHERE b.user_id = ?`,
       userId,
     ),
+  ]);
+
+  return {
+    streak: current,
+    longestStreak: longest,
+    todaySeconds: byDay.get(today)?.seconds ?? 0,
+    totalSeconds: reading.reduce((sum, r) => sum + r.seconds, 0),
+    daysRead: active.size,
+    vocabTotal,
+    knownTotal,
+    dueTotal,
+    reviewedTotal: reviews.reduce((sum, r) => sum + r.reviewed, 0),
+    correctTotal: reviews.reduce((sum, r) => sum + r.correct, 0),
+    booksStarted,
+    wordsRead,
     days,
   };
 }
