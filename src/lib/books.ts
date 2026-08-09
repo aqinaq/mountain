@@ -1,6 +1,5 @@
-import fs from "node:fs/promises";
 import path from "node:path";
-import { FILES_DIR, getDb, plain, plainAll } from "./db";
+import { getDb, plain, plainAll } from "./db";
 import { countWords, parseEpub, parseSubtitles, parseText, type ParsedBook } from "./ingest";
 import { parsePdf } from "./pdf-layout";
 import { coverageByBook, indexBook, indexPending } from "./words";
@@ -28,14 +27,14 @@ export type BookSummary = BookRow & {
   coverage?: number | null;
 };
 
-export function listBooks(userId: number): BookSummary[] {
+export async function listBooks(userId: number): Promise<BookSummary[]> {
   // Books imported before word counting existed, or indexed under older
   // lemmatiser rules, catch up here so the shelf can show coverage.
-  indexPending(userId);
+  await indexPending(userId);
 
+  const db = await getDb();
   const books = plainAll(
-    getDb()
-      .prepare(
+    await db.all<BookSummary>(
       `SELECT b.*,
               (SELECT COUNT(*) FROM chapters c WHERE c.book_id = b.id) AS chapter_count,
               COALESCE(p.chapter_idx, 0)  AS chapter_idx,
@@ -45,21 +44,21 @@ export function listBooks(userId: number): BookSummary[] {
          LEFT JOIN progress p ON p.book_id = b.id
         WHERE b.user_id = ?
         ORDER BY COALESCE(p.updated_at, b.created_at) DESC`,
-      )
-      .all(userId) as BookSummary[],
+      userId,
+    ),
   );
 
-  const coverage = coverageByBook(userId);
+  const coverage = await coverageByBook(userId);
   return books.map((b) => ({ ...b, coverage: coverage.get(b.id) ?? null }));
 }
 
 /** Null for a book that is not this reader's — callers turn that into a 404,
  *  so a stranger's id is indistinguishable from one that does not exist. */
-export function getBook(userId: number, id: number): BookSummary | null {
+export async function getBook(userId: number, id: number): Promise<BookSummary | null> {
+  const db = await getDb();
   const row =
-    (getDb()
-      .prepare(
-        `SELECT b.*,
+    (await db.get<BookSummary>(
+      `SELECT b.*,
                 (SELECT COUNT(*) FROM chapters c WHERE c.book_id = b.id) AS chapter_count,
                 COALESCE(p.chapter_idx, 0) AS chapter_idx,
                 COALESCE(p.scroll_pct, 0)  AS scroll_pct,
@@ -67,8 +66,9 @@ export function getBook(userId: number, id: number): BookSummary | null {
            FROM books b
            LEFT JOIN progress p ON p.book_id = b.id
           WHERE b.id = ? AND b.user_id = ?`,
-      )
-      .get(id, userId) as BookSummary | undefined) ?? null;
+      id,
+      userId,
+    )) ?? null;
   return row ? plain(row) : null;
 }
 
@@ -101,43 +101,51 @@ function sectionsOf(html: string): Section[] {
   return sections;
 }
 
-export function getChapters(userId: number, bookId: number): ChapterRef[] {
+export async function getChapters(userId: number, bookId: number): Promise<ChapterRef[]> {
+  const db = await getDb();
   const rows = plainAll(
-    getDb()
-      .prepare(
-        `SELECT c.idx, c.title, c.html FROM chapters c
-           JOIN books b ON b.id = c.book_id
-          WHERE c.book_id = ? AND b.user_id = ?
-          ORDER BY c.idx`,
-      )
-      .all(bookId, userId) as { idx: number; title: string; html: string }[],
+    await db.all<{ idx: number; title: string; html: string }>(
+      `SELECT c.idx, c.title, c.html FROM chapters c
+         JOIN books b ON b.id = c.book_id
+        WHERE c.book_id = ? AND b.user_id = ?
+        ORDER BY c.idx`,
+      bookId,
+      userId,
+    ),
   );
   return rows.map(({ idx, title, html }) => ({ idx, title, sections: sectionsOf(html) }));
 }
 
-export function getChapter(userId: number, bookId: number, idx: number) {
+export async function getChapter(userId: number, bookId: number, idx: number) {
+  const db = await getDb();
   const row =
-    (getDb()
-      .prepare(
-        `SELECT c.idx, c.title, c.html FROM chapters c
-           JOIN books b ON b.id = c.book_id
-          WHERE c.book_id = ? AND c.idx = ? AND b.user_id = ?`,
-      )
-      .get(bookId, idx, userId) as { idx: number; title: string; html: string } | undefined) ?? null;
+    (await db.get<{ idx: number; title: string; html: string }>(
+      `SELECT c.idx, c.title, c.html FROM chapters c
+         JOIN books b ON b.id = c.book_id
+        WHERE c.book_id = ? AND c.idx = ? AND b.user_id = ?`,
+      bookId,
+      idx,
+      userId,
+    )) ?? null;
   return row ? plain(row) : null;
 }
 
 export async function deleteBook(userId: number, id: number) {
-  const book = getDb()
-    .prepare("SELECT file_name FROM books WHERE id = ? AND user_id = ?")
-    .get(id, userId) as { file_name: string | null } | undefined;
+  const db = await getDb();
+  const book = await db.get<{ id: number }>(
+    "SELECT id FROM books WHERE id = ? AND user_id = ?",
+    id,
+    userId,
+  );
   if (!book) return;
-  // book_words and book_index cascade; the FTS virtual table has no foreign key.
-  getDb().prepare("DELETE FROM chapters_fts WHERE book_id = ?").run(id);
-  getDb().prepare("DELETE FROM books WHERE id = ? AND user_id = ?").run(id, userId);
-  if (book?.file_name) {
-    await fs.rm(path.join(/*turbopackIgnore: true*/ FILES_DIR, book.file_name), { force: true });
-  }
+
+  // book_files, book_words and book_index all cascade off the book; the FTS
+  // virtual table has no foreign key to cascade through, so it is swept by
+  // hand — in the same batch, so a half-deleted book cannot be left behind.
+  await db.batch([
+    { sql: "DELETE FROM chapters_fts WHERE book_id = ?", args: [id] },
+    { sql: "DELETE FROM books WHERE id = ? AND user_id = ?", args: [id, userId] },
+  ]);
 }
 
 type SaveInput = {
@@ -152,63 +160,65 @@ type SaveInput = {
 };
 
 export async function saveBook(input: SaveInput): Promise<number> {
-  const db = getDb();
+  const db = await getDb();
   const { parsed } = input;
   const title = input.titleOverride?.trim() || parsed.title;
   const author = input.authorOverride?.trim() || parsed.author;
 
-  let fileName: string | null = null;
-  if (input.original) {
-    fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${input.original.ext}`;
-    await fs.writeFile(path.join(/*turbopackIgnore: true*/ FILES_DIR, fileName), input.original.buffer);
-  }
+  // The name is kept for the download filename only; the bytes themselves go
+  // into book_files, because there is no disk to put them on any more.
+  const fileName = input.original
+    ? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${input.original.ext}`
+    : null;
 
-  db.exec("BEGIN");
+  const info = await db.run(
+    `INSERT INTO books (user_id, title, author, language, cover_url, source, source_id,
+                        file_name, file_ext, word_count, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    input.userId,
+    title,
+    author,
+    parsed.language || "en",
+    input.coverUrl ?? null,
+    input.source,
+    input.sourceId ?? null,
+    fileName,
+    input.original?.ext ?? null,
+    countWords(parsed.chapters),
+    Date.now(),
+  );
+  const bookId = info.lastInsertRowid;
+
   try {
-    const info = db
-      .prepare(
-        `INSERT INTO books (user_id, title, author, language, cover_url, source, source_id,
-                            file_name, file_ext, word_count, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        input.userId,
-        title,
-        author,
-        parsed.language || "en",
-        input.coverUrl ?? null,
-        input.source,
-        input.sourceId ?? null,
-        fileName,
-        input.original?.ext ?? null,
-        countWords(parsed.chapters),
-        Date.now(),
-      );
-    const bookId = Number(info.lastInsertRowid);
+    const writes: { sql: string; args?: unknown[] }[] = parsed.chapters.map((c, i) => ({
+      sql: "INSERT INTO chapters (book_id, idx, title, html) VALUES (?, ?, ?, ?)",
+      args: [bookId, i, c.title, c.html],
+    }));
 
-    const insert = db.prepare(
-      "INSERT INTO chapters (book_id, idx, title, html) VALUES (?, ?, ?, ?)",
-    );
-    parsed.chapters.forEach((c, i) => insert.run(bookId, i, c.title, c.html));
-
-    db.exec("COMMIT");
-
-    // Word counts and the search index. A failure here costs the coverage
-    // figures, not the book — `ensureIndexed` will retry on first read.
-    try {
-      indexBook(bookId);
-    } catch {
-      /* indexed lazily instead */
+    if (input.original) {
+      writes.push({
+        sql: "INSERT INTO book_files (book_id, ext, bytes) VALUES (?, ?, ?)",
+        args: [bookId, input.original.ext, input.original.buffer],
+      });
     }
 
-    return bookId;
+    await db.batch(writes);
   } catch (err) {
-    db.exec("ROLLBACK");
-    if (fileName) {
-      await fs.rm(path.join(/*turbopackIgnore: true*/ FILES_DIR, fileName), { force: true });
-    }
+    // The book row is already in; a book with no chapters is worse than no
+    // book, so it goes back out again.
+    await db.run("DELETE FROM books WHERE id = ?", bookId);
     throw err;
   }
+
+  // Word counts and the search index. A failure here costs the coverage
+  // figures, not the book — `ensureIndexed` will retry on first read.
+  try {
+    await indexBook(bookId);
+  } catch {
+    /* indexed lazily instead */
+  }
+
+  return bookId;
 }
 
 export async function ingestBuffer(
@@ -246,9 +256,12 @@ export async function importFromUrl(userId: number, url: string): Promise<number
 
   // Scoped to the reader: "already imported" has to mean already in *your*
   // library, or you would be handed a book id you cannot open.
-  const existing = getDb()
-    .prepare("SELECT id FROM books WHERE user_id = ? AND source = 'web' AND source_id = ?")
-    .get(userId, normalized) as { id: number } | undefined;
+  const db = await getDb();
+  const existing = await db.get<{ id: number }>(
+    "SELECT id FROM books WHERE user_id = ? AND source = 'web' AND source_id = ?",
+    userId,
+    normalized,
+  );
   if (existing) return existing.id;
 
   const parsed = await fetchArticle(normalized);
@@ -324,9 +337,12 @@ async function download(url: string): Promise<Buffer> {
 }
 
 export async function importFromGutenberg(userId: number, gutenbergId: number): Promise<number> {
-  const existing = getDb()
-    .prepare("SELECT id FROM books WHERE user_id = ? AND source = 'gutenberg' AND source_id = ?")
-    .get(userId, String(gutenbergId)) as { id: number } | undefined;
+  const db = await getDb();
+  const existing = await db.get<{ id: number }>(
+    "SELECT id FROM books WHERE user_id = ? AND source = 'gutenberg' AND source_id = ?",
+    userId,
+    String(gutenbergId),
+  );
   if (existing) return existing.id;
 
   const res = await fetch(`https://gutendex.com/books/${gutenbergId}`, { cache: "no-store" });

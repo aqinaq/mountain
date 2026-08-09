@@ -32,10 +32,12 @@ function cacheKey(text: string, target: string) {
   return `${target}::${text.toLowerCase()}`;
 }
 
-function readCache(text: string, target: string): TranslateResult | null {
-  const row = getDb()
-    .prepare("SELECT payload, created_at FROM translation_cache WHERE key = ?")
-    .get(cacheKey(text, target)) as { payload: string; created_at: number } | undefined;
+async function readCache(text: string, target: string): Promise<TranslateResult | null> {
+  const db = await getDb();
+  const row = await db.get<{ payload: string; created_at: number }>(
+    "SELECT payload, created_at FROM translation_cache WHERE key = ?",
+    cacheKey(text, target),
+  );
   if (!row) return null;
   if (Date.now() - row.created_at > CACHE_TTL_MS) return null;
   try {
@@ -45,13 +47,15 @@ function readCache(text: string, target: string): TranslateResult | null {
   }
 }
 
-function writeCache(text: string, target: string, result: TranslateResult) {
-  getDb()
-    .prepare(
-      `INSERT INTO translation_cache (key, payload, created_at) VALUES (?, ?, ?)
-       ON CONFLICT(key) DO UPDATE SET payload = excluded.payload, created_at = excluded.created_at`,
-    )
-    .run(cacheKey(text, target), JSON.stringify(result), Date.now());
+async function writeCache(text: string, target: string, result: TranslateResult): Promise<void> {
+  const db = await getDb();
+  await db.run(
+    `INSERT INTO translation_cache (key, payload, created_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET payload = excluded.payload, created_at = excluded.created_at`,
+    cacheKey(text, target),
+    JSON.stringify(result),
+    Date.now(),
+  );
 }
 
 async function fetchJson(url: string, timeoutMs = 8000): Promise<unknown> {
@@ -188,7 +192,7 @@ export async function translate(rawText: string, target: string): Promise<Transl
   const text = rawText.trim().replace(/\s+/g, " ").slice(0, 1200);
   const kind = classify(text);
 
-  const cached = readCache(text, target);
+  const cached = await readCache(text, target);
   if (cached) return cached;
 
   const [mt, dict] = await Promise.all([
@@ -216,6 +220,6 @@ export async function translate(rawText: string, target: string): Promise<Transl
     error: mt ? undefined : "Translation services are unreachable right now.",
   };
 
-  if (mt || senses.length) writeCache(text, target, result);
+  if (mt || senses.length) await writeCache(text, target, result);
   return result;
 }
