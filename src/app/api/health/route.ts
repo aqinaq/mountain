@@ -1,81 +1,69 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@libsql/client";
-import { getDb } from "@/lib/db";
-import { listBooks } from "@/lib/books";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Whether this deployment can actually reach its database, and if not, why.
+ * Whether this deployment can reach its database and load its own modules.
  *
- * A misconfigured environment variable fails as a 500 with an empty body,
- * which tells whoever is deploying nothing at all. This reports what the
- * process was given — that a variable is present and how long it is, never
- * what it says — and the database's own answer to being asked.
- *
- * Behind the password gate, like everything else under /api.
+ * Both failures look identical from outside — a 500 with an empty body — and
+ * they have nothing to do with each other. A module that throws while being
+ * imported takes the whole route down before any handler runs, so nothing here
+ * may be imported at the top: every suspect is pulled in inside a try, which
+ * is the only way to find out which one is at fault.
  */
 export async function GET() {
   const url = process.env.TURSO_DATABASE_URL;
   const token = process.env.TURSO_AUTH_TOKEN;
 
   const env = {
-    TURSO_DATABASE_URL: url
-      ? // The host is safe to show and is the thing most likely to be wrong;
-        // a stray quote or a trailing newline shows up here immediately.
-        { set: true, value: url, length: url.length }
-      : { set: false },
-    TURSO_AUTH_TOKEN: token
-      ? { set: true, length: token.length, startsWith: token.slice(0, 6) }
-      : { set: false },
+    TURSO_DATABASE_URL: url ? { set: true, value: url } : { set: false },
+    TURSO_AUTH_TOKEN: token ? { set: true, length: token.length } : { set: false },
     MOUNTAIN_PASSWORD: { set: Boolean(process.env.MOUNTAIN_PASSWORD) },
     VERCEL_REGION: process.env.VERCEL_REGION ?? null,
   };
 
-  if (!url) {
-    return NextResponse.json({ ok: false, reason: "TURSO_DATABASE_URL is not set", env }, { status: 503 });
+  // Third-party first, then this project's modules in dependency order, so the
+  // first failure names the deepest thing that is actually broken.
+  const suspects: [string, () => Promise<unknown>][] = [
+    ["@libsql/client", () => import("@libsql/client")],
+    ["jszip", () => import("jszip")],
+    ["fast-xml-parser", () => import("fast-xml-parser")],
+    ["sanitize-html", () => import("sanitize-html")],
+    ["pdfjs-dist", () => import("pdfjs-dist/legacy/build/pdf.mjs")],
+    ["lib/ingest", () => import("@/lib/ingest")],
+    ["lib/pdf-layout", () => import("@/lib/pdf-layout")],
+    ["lib/words", () => import("@/lib/words")],
+    ["lib/books", () => import("@/lib/books")],
+  ];
+
+  const imports: Record<string, string> = {};
+  for (const [name, load] of suspects) {
+    try {
+      await load();
+      imports[name] = "ok";
+    } catch (err) {
+      imports[name] = describe(err);
+    }
   }
 
-  const steps: Record<string, unknown> = {};
-
-  // Each stage separately, because "the database is reachable" and "the app
-  // can read a library out of it" fail for different reasons and a single
-  // try/catch around both cannot say which one happened.
+  let database: unknown;
   try {
-    const started = Date.now();
-    const client = createClient({ url, authToken: token, intMode: "number" });
-    const books = await client.execute("SELECT COUNT(*) AS n FROM books");
-    steps.rawQuery = { ok: true, books: books.rows[0].n, ms: Date.now() - started };
+    const { getDb } = await import("@/lib/db");
+    const db = await getDb();
+    const row = await db.get<{ n: number }>("SELECT COUNT(*) AS n FROM books");
+    database = { ok: true, books: row?.n ?? 0 };
   } catch (err) {
-    steps.rawQuery = { ok: false, error: describe(err) };
-    return NextResponse.json({ ok: false, env, steps }, { status: 503 });
+    database = { ok: false, error: describe(err) };
   }
 
-  try {
-    const started = Date.now();
-    await getDb();
-    steps.migrate = { ok: true, ms: Date.now() - started };
-  } catch (err) {
-    steps.migrate = { ok: false, error: describe(err) };
-    return NextResponse.json({ ok: false, env, steps }, { status: 503 });
-  }
-
-  try {
-    const started = Date.now();
-    const books = await listBooks(1);
-    steps.listBooks = { ok: true, count: books.length, ms: Date.now() - started };
-  } catch (err) {
-    steps.listBooks = { ok: false, error: describe(err) };
-    return NextResponse.json({ ok: false, env, steps }, { status: 503 });
-  }
-
-  return NextResponse.json({ ok: true, env, steps });
+  const ok = Object.values(imports).every((v) => v === "ok");
+  return NextResponse.json({ ok, env, imports, database }, { status: ok ? 200 : 503 });
 }
 
-/** Errors from libSQL carry the useful part in `cause`, not in the message. */
+/** Errors from a failed import carry the useful part in `cause`, not the message. */
 function describe(err: unknown): string {
   if (!(err instanceof Error)) return String(err);
   const cause = err.cause instanceof Error ? ` | cause: ${err.cause.message}` : "";
-  return `${err.name}: ${err.message}${cause}`;
+  return `${err.name}: ${err.message}${cause}`.slice(0, 400);
 }
