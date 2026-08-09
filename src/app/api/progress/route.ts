@@ -23,7 +23,7 @@ export async function POST(req: Request) {
   if (!Number.isInteger(bookId)) {
     return NextResponse.json({ error: "A bookId is required." }, { status: 400 });
   }
-  if (!ownsBook(userId, bookId)) {
+  if (!(await ownsBook(userId, bookId))) {
     return NextResponse.json({ error: "Book not found." }, { status: 404 });
   }
 
@@ -33,19 +33,22 @@ export async function POST(req: Request) {
     const chapterIdx = Number(body.chapterIdx);
     const scrollPct = Math.min(1, Math.max(0, Number(body.scrollPct) || 0));
 
-    getDb()
-      .prepare(
-        `INSERT INTO progress (book_id, chapter_idx, scroll_pct, updated_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(book_id) DO UPDATE SET
-           chapter_idx = excluded.chapter_idx,
-           scroll_pct  = excluded.scroll_pct,
-           updated_at  = excluded.updated_at`,
-      )
-      .run(bookId, chapterIdx, scrollPct, Date.now());
+    const db = await getDb();
+    await db.run(
+      `INSERT INTO progress (book_id, chapter_idx, scroll_pct, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(book_id) DO UPDATE SET
+         chapter_idx = excluded.chapter_idx,
+         scroll_pct  = excluded.scroll_pct,
+         updated_at  = excluded.updated_at`,
+      bookId,
+      chapterIdx,
+      scrollPct,
+      Date.now(),
+    );
   }
 
-  if (Number(body.seconds) > 0) logReading(userId, bookId, Number(body.seconds));
+  if (Number(body.seconds) > 0) await logReading(userId, bookId, Number(body.seconds));
 
   return NextResponse.json({ ok: true });
 }

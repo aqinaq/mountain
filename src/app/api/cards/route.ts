@@ -31,7 +31,7 @@ export async function GET(req: Request) {
   const userId = await currentUserId();
   if (!userId) return noSession();
 
-  backfillCards(userId);
+  await backfillCards(userId);
 
   const url = new URL(req.url);
   const requested = url.searchParams.get("type");
@@ -40,7 +40,7 @@ export async function GET(req: Request) {
 
   // Over-fetch a little: cards whose prompt cannot be built are dropped below.
   const cards: ReviewCard[] = [];
-  for (const c of dueCards(userId, limit + 20, only)) {
+  for (const c of await dueCards(userId, limit + 20, only)) {
     let prompt = c.term;
     let answer = c.translation || "—";
     let promptIsEnglish = true;
@@ -72,7 +72,7 @@ export async function GET(req: Request) {
     if (cards.length >= limit) break;
   }
 
-  return NextResponse.json({ cards, due: dueBreakdown(userId) });
+  return NextResponse.json({ cards, due: await dueBreakdown(userId) });
 }
 
 export async function PATCH(req: Request) {
@@ -85,7 +85,7 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "A card id is required." }, { status: 400 });
   }
 
-  const result = answerCard(userId, id, Boolean(body.correct));
+  const result = await answerCard(userId, id, Boolean(body.correct));
   if (!result) return NextResponse.json({ error: "Card not found." }, { status: 404 });
 
   return NextResponse.json({ ok: true, ...result });

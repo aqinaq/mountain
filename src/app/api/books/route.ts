@@ -9,5 +9,5 @@ export async function GET() {
   const userId = await currentUserId();
   if (!userId) return noSession();
 
-  return NextResponse.json({ books: listBooks(userId) });
+  return NextResponse.json({ books: await listBooks(userId) });
 }

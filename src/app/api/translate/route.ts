@@ -36,8 +36,8 @@ export async function POST(req: Request) {
       return NextResponse.json({
         ...result,
         lemma: base,
-        known: isKnown(userId, [base]).has(base),
-        occurrences: Number.isInteger(bookId) ? occurrencesInBook(userId, bookId, text) : 0,
+        known: (await isKnown(userId, [base])).has(base),
+        occurrences: Number.isInteger(bookId) ? await occurrencesInBook(userId, bookId, text) : 0,
       });
     }
 

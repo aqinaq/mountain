@@ -5,8 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "postbuild": "cp -r public .next/standalone/ && cp -r .next/static .next/standalone/.next/",
-    "start": "MOUNTAIN_DATA_DIR=\"$PWD/data\" node .next/standalone/server.js",
+    "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {

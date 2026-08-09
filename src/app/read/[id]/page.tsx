@@ -14,8 +14,8 @@ export default async function ReadPage({ params }: { params: Promise<{ id: strin
   const userId = await currentUserId();
   if (!userId) notFound();
 
-  const book = getBook(userId, id);
+  const book = await getBook(userId, id);
   if (!book) notFound();
 
-  return <Reader book={book} chapters={getChapters(userId, id)} />;
+  return <Reader book={book} chapters={await getChapters(userId, id)} />;
 }

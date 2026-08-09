@@ -13,15 +13,15 @@ export async function GET(req: Request, { params }: Ctx) {
 
   const { id } = await params;
   const bookId = Number(id);
-  if (!Number.isInteger(bookId) || !ownsBook(userId, bookId)) {
+  if (!Number.isInteger(bookId) || !(await ownsBook(userId, bookId))) {
     return NextResponse.json({ error: "Unknown book." }, { status: 404 });
   }
 
   const limit = Math.min(200, Math.max(1, Number(new URL(req.url).searchParams.get("limit")) || 50));
 
   return NextResponse.json({
-    coverage: bookCoverage(userId, bookId),
-    unknown: unknownWords(userId, bookId, limit),
+    coverage: await bookCoverage(userId, bookId),
+    unknown: await unknownWords(userId, bookId, limit),
   });
 }
 
@@ -34,5 +34,5 @@ export async function POST(_req: Request, { params }: Ctx) {
   if (!Number.isInteger(bookId) || !ownsBook(userId, bookId)) {
     return NextResponse.json({ error: "Unknown book." }, { status: 404 });
   }
-  return NextResponse.json({ ok: true, ...indexBook(bookId) });
+  return NextResponse.json({ ok: true, ...(await indexBook(bookId)) });
 }

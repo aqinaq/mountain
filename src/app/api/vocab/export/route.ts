@@ -35,15 +35,15 @@ export async function GET(req: Request) {
 
   const format = new URL(req.url).searchParams.get("format") === "csv" ? "csv" : "tsv";
 
-  const rows = getDb()
-    .prepare(
-      `SELECT v.term, v.translation, v.context, v.lemma, b.title AS book_title, v.created_at
-         FROM vocab v
-         LEFT JOIN books b ON b.id = v.book_id
-        WHERE v.user_id = ?
-        ORDER BY v.created_at`,
-    )
-    .all(userId) as Row[];
+  const db = await getDb();
+  const rows = await db.all<Row>(
+    `SELECT v.term, v.translation, v.context, v.lemma, b.title AS book_title, v.created_at
+       FROM vocab v
+       LEFT JOIN books b ON b.id = v.book_id
+      WHERE v.user_id = ?
+      ORDER BY v.created_at`,
+    userId,
+  );
 
   const lines: string[] = [];
 

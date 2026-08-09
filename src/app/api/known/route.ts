@@ -24,8 +24,8 @@ export async function GET(req: Request) {
 
   const full = new URL(req.url).searchParams.get("list") === "1";
   return NextResponse.json({
-    count: knownCount(userId),
-    lemmas: full ? allKnownLemmas(userId) : undefined,
+    count: await knownCount(userId),
+    lemmas: full ? await allKnownLemmas(userId) : undefined,
     core: { total: CORE_WORDS.length, presets: CORE_PRESETS },
   });
 }
@@ -41,12 +41,12 @@ export async function POST(req: Request) {
   };
 
   let added = 0;
-  if (Number.isFinite(body.seed)) added += seedCoreWords(userId, Number(body.seed));
+  if (Number.isFinite(body.seed)) added += await seedCoreWords(userId, Number(body.seed));
   if (Array.isArray(body.lemmas) && body.lemmas.length) {
-    added += markKnown(userId, body.lemmas.slice(0, 5000).map(String));
+    added += await markKnown(userId, body.lemmas.slice(0, 5000).map(String));
   }
 
-  return NextResponse.json({ ok: true, added, count: knownCount(userId) });
+  return NextResponse.json({ ok: true, added, count: await knownCount(userId) });
 }
 
 /** `?lemma=x` forgets one word; `?clear=all|seed|manual` forgets a whole group. */
@@ -61,12 +61,15 @@ export async function DELETE(req: Request) {
     if (!["all", "seed", "manual"].includes(clear)) {
       return NextResponse.json({ error: "Unknown group to clear." }, { status: 400 });
     }
-    const removed = clearKnown(userId, clear === "all" ? undefined : (clear as "seed" | "manual"));
-    return NextResponse.json({ ok: true, removed, count: knownCount(userId) });
+    const removed = await clearKnown(
+      userId,
+      clear === "all" ? undefined : (clear as "seed" | "manual"),
+    );
+    return NextResponse.json({ ok: true, removed, count: await knownCount(userId) });
   }
 
   const lemma = params.get("lemma");
   if (!lemma) return NextResponse.json({ error: "A lemma is required." }, { status: 400 });
-  unmarkKnown(userId, lemma);
-  return NextResponse.json({ ok: true, count: knownCount(userId) });
+  await unmarkKnown(userId, lemma);
+  return NextResponse.json({ ok: true, count: await knownCount(userId) });
 }

@@ -12,9 +12,9 @@ export async function GET(_req: Request, { params }: Ctx) {
   if (!userId) return noSession();
 
   const id = Number((await params).id);
-  const book = getBook(userId, id);
+  const book = await getBook(userId, id);
   if (!book) return NextResponse.json({ error: "Book not found." }, { status: 404 });
-  return NextResponse.json({ book, chapters: getChapters(userId, id) });
+  return NextResponse.json({ book, chapters: await getChapters(userId, id) });
 }
 
 export async function DELETE(_req: Request, { params }: Ctx) {
@@ -22,7 +22,8 @@ export async function DELETE(_req: Request, { params }: Ctx) {
   if (!userId) return noSession();
 
   const id = Number((await params).id);
-  if (!getBook(userId, id)) return NextResponse.json({ error: "Book not found." }, { status: 404 });
+  if (!(await getBook(userId, id)))
+    return NextResponse.json({ error: "Book not found." }, { status: 404 });
   await deleteBook(userId, id);
   return NextResponse.json({ ok: true });
 }

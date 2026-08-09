@@ -17,7 +17,7 @@ export async function POST(req: Request) {
 
   try {
     const id = await importFromUrl(userId, url);
-    const book = getBook(userId, id);
+    const book = await getBook(userId, id);
     return NextResponse.json({ id, title: book?.title ?? "", chapters: book?.chapter_count ?? 0 });
   } catch (err) {
     const message = err instanceof Error ? err.message : "That page could not be imported.";

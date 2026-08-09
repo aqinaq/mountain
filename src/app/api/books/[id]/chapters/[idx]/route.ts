@@ -12,7 +12,7 @@ export async function GET(_req: Request, { params }: Ctx) {
   if (!userId) return noSession();
 
   const { id, idx } = await params;
-  const chapter = getChapter(userId, Number(id), Number(idx));
+  const chapter = await getChapter(userId, Number(id), Number(idx));
   if (!chapter) return NextResponse.json({ error: "Chapter not found." }, { status: 404 });
   return NextResponse.json({ chapter });
 }

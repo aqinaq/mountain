@@ -20,5 +20,5 @@ export async function GET(req: Request, { params }: Ctx) {
   const q = (new URL(req.url).searchParams.get("q") ?? "").trim();
   if (q.length < 2) return NextResponse.json({ hits: [] });
 
-  return NextResponse.json({ hits: searchBook(userId, bookId, q) });
+  return NextResponse.json({ hits: await searchBook(userId, bookId, q) });
 }
