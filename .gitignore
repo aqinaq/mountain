@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# reader data (uploaded books, sqlite db)
+/data/
+
+# Claude Code local settings (machine-specific absolute paths)
+.claude/

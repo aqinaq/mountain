@@ -1,26 +1,493 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* ---------- app chrome ----------
+   Light is the base palette; dark is layered on top in two places, because a
+   theme has three states, not two. An explicit choice stamps data-theme on
+   <html>; the default "system" stamps nothing and lets prefers-color-scheme
+   decide. The :not([data-theme="light"]) guard is what lets a manual "light"
+   win on a machine set to dark.
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+   The reading surface is themed separately — see .surface below. The reader
+   picks its own paper, and it is not meant to follow the app chrome: the page
+   around the text went green, the page the text sits on stayed book-coloured. */
+:root {
+  color-scheme: light;
+
+  /* Forest and ink. The chrome is a table the book sits on, not a dashboard —
+     every neutral carries a little green so nothing reads as plain grey, and
+     the only saturated colour is a deep green. */
+  --bg: #f3f7f3;
+  --bg-raised: #fbfdfa;
+  --bg-hover: #e6ede6;
+  --border: #d7e0d7;
+  --border-strong: #b4c4b6;
+  --field-bg: #fbfdfa;
+  --text: #16211a;
+  --text-dim: #5c6e62;
+  --accent: #2f5d3a;
+  --accent-strong: #376d45;
+  --accent-hover: #24492d;
+  /* Red for danger and a warm olive for success: both have to stay legible as
+     *not* the accent, now that the accent is itself green. */
+  --danger: #a5342a;
+  --good: #6b7d33;
+  --shadow-pop: 0 18px 42px -14px rgb(20 45 30 / 0.26);
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --bg: #0e1511;
+    --bg-raised: #141d17;
+    --bg-hover: #1c2820;
+    --border: #24312a;
+    --border-strong: #3a4c41;
+    --field-bg: #0a110d;
+    --text: #dfe9e1;
+    --text-dim: #94a89b;
+    --accent: #7fc99a;
+    --accent-strong: #63b382;
+    --accent-hover: #52a271;
+    --danger: #e8836d;
+    --good: #b9c98a;
+    --shadow-pop: 0 18px 42px -14px rgb(0 0 0 / 0.7);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0e1511;
+  --bg-raised: #141d17;
+  --bg-hover: #1c2820;
+  --border: #24312a;
+  --border-strong: #3a4c41;
+  --field-bg: #0a110d;
+  --text: #dfe9e1;
+  --text-dim: #94a89b;
+  --accent: #7fc99a;
+  --accent-strong: #63b382;
+  --accent-hover: #52a271;
+  --danger: #e8836d;
+  --good: #b9c98a;
+  --shadow-pop: 0 18px 42px -14px rgb(0 0 0 / 0.7);
 }
+
+/* Serif for anything that names something — titles, headings, the wordmark.
+   Sans stays for controls and metadata, where a serif only slows reading down.
+   Both are system stacks: no webfont request, so the shelf paints immediately. */
+:root {
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, ui-serif, serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-raised: var(--bg-raised);
+  --color-line: var(--border);
+  --color-ink: var(--text);
+  --color-dim: var(--text-dim);
+  --color-accent: var(--accent);
+  --font-serif: var(--font-serif);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Page and section titles. Serif, roman weight, a touch tighter than the
+   default — the size does the work, so it never needs to be bold. */
+.display {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+/* The small all-caps label that opens a section or annotates a number. */
+.eyebrow {
+  font-size: 0.6875rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* ---------- reading surface themes ---------- */
+.surface {
+  --paper: #ffffff;
+  --paper-ink: #1a1a1a;
+  --paper-dim: #6b6b6b;
+  --paper-line: #e6e3dd;
+  --paper-mark: #ffe9a8;
+  --paper-mark-ink: #1a1a1a;
+  background: var(--paper);
+  color: var(--paper-ink);
+}
+
+.surface[data-surface="sepia"] {
+  --paper: #f6efe2;
+  --paper-ink: #3c3226;
+  --paper-dim: #857661;
+  --paper-line: #e0d5c0;
+  --paper-mark: #f2d68a;
+}
+
+.surface[data-surface="dark"] {
+  --paper: #14171c;
+  --paper-ink: #d8dee7;
+  --paper-dim: #8c97a6;
+  --paper-line: #2b323c;
+  --paper-mark: #35507e;
+  --paper-mark-ink: #eaf1ff;
+}
+
+/* ---------- prose ----------
+   Spacing is expressed in em so every rule scales with the reader's text-size
+   slider, and the rhythm between paragraphs, headings and quotes holds. */
+.prose-reader p,
+.prose-reader li {
+  margin: 0 0 1.05em;
+  text-align: justify;
+  hyphens: auto;
+}
+
+.prose-reader > p:last-child {
+  margin-bottom: 0;
+}
+
+/* Section headings: set apart by air above, not by shouting. Books break far
+   more often at a heading than the 0.7em of the old rule suggested. */
+.prose-reader h1,
+.prose-reader h2,
+.prose-reader h3,
+.prose-reader h4 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 2.4em 0 0.9em;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.prose-reader h1 { font-size: 1.32em; }
+.prose-reader h2 { font-size: 1.1em; }
+.prose-reader h3,
+.prose-reader h4 { font-size: 1em; }
+
+/* PDFs give up their headings as tracked-out capitals; letting them keep that
+   spacing reads as display type instead of as an accident. */
+.prose-reader h2,
+.prose-reader h3 {
+  letter-spacing: 0.055em;
+}
+
+/* The first block of a chapter shouldn't push itself off the top. */
+.prose-reader > :first-child {
+  margin-top: 0;
+}
+
+/* A heading followed straight by its text needs no extra gap between them. */
+.prose-reader h1 + p,
+.prose-reader h2 + p,
+.prose-reader h3 + p,
+.prose-reader h4 + p {
+  margin-top: 0;
+}
+
+.prose-reader blockquote {
+  margin: 1.6em 0;
+  padding-left: 1.1em;
+  border-left: 3px solid var(--paper-line);
+  color: var(--paper-dim);
+  font-style: italic;
+  text-align: left;
+}
+
+.prose-reader blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+.prose-reader hr {
+  border: 0;
+  border-top: 1px solid var(--paper-line);
+  margin: 2.4em auto;
+  width: 35%;
+}
+
+.prose-reader ul,
+.prose-reader ol {
+  padding-left: 1.4em;
+  margin: 0 0 1.05em;
+}
+
+.prose-reader li {
+  margin-bottom: 0.4em;
+}
+
+/* Footnote markers recovered from PDFs — kept small so they don't open up the
+   line they sit on. */
+.prose-reader sup {
+  font-size: 0.62em;
+  line-height: 0;
+  vertical-align: super;
+  color: var(--paper-dim);
+}
+
+/* ---------- tappable words ---------- */
+.w {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 0 0.02em;
+  transition: background-color 90ms ease;
+}
+
+@media (hover: hover) {
+  .w:hover {
+    background: var(--paper-mark);
+    color: var(--paper-mark-ink, var(--paper-ink));
+  }
+}
+
+.w[data-active="1"] {
+  background: var(--paper-mark);
+  color: var(--paper-mark-ink, var(--paper-ink));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--paper-ink) 25%, transparent);
+}
+
+.w[data-saved="1"] {
+  border-bottom: 2px solid color-mix(in srgb, var(--paper-ink) 30%, transparent);
+}
+
+/* Words you have marked as known step back so the unfamiliar ones carry the
+   page. Faded, never hidden — this is still the author's sentence. */
+.w[data-known="1"] {
+  color: color-mix(in srgb, var(--paper-ink) 72%, var(--paper));
+}
+
+.w[data-known="1"][data-saved="1"] {
+  color: inherit;
+}
+
+/* Read-along: the spoken word, inside the paragraph being spoken. */
+[data-speaking-block="1"] {
+  background: color-mix(in srgb, var(--paper-mark) 26%, transparent);
+  border-radius: 6px;
+}
+
+.w[data-speaking="1"] {
+  background: var(--paper-mark);
+  color: var(--paper-mark-ink, var(--paper-ink));
+  border-radius: 3px;
+}
+
+/* A search hit, flashed for a moment after jumping to it. */
+.w[data-found="1"] {
+  background: var(--paper-mark);
+  color: var(--paper-mark-ink, var(--paper-ink));
+  animation: found 2.2s ease-out;
+}
+
+@keyframes found {
+  0%, 55% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--paper-ink) 22%, transparent); }
+  100%    { box-shadow: 0 0 0 3px transparent; }
+}
+
+.search-snippet mark {
+  background: var(--paper-mark);
+  color: var(--paper-mark-ink, var(--paper-ink));
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+::selection {
+  background: var(--paper-mark, #ffe9a8);
+  color: var(--paper-mark-ink, inherit);
+}
+
+/* ---------- misc ---------- */
+.card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* A section of the page marked by a rule above it rather than by a box around
+   it. Boxes stack into a grid of panels; rules read as a printed page. */
+.sheet {
+  border-top: 1px solid var(--border);
+  padding-top: 1.5rem;
+}
+
+/* One entry in a shelf or a word list. The divider belongs to the row above,
+   and the last one is dropped so the list ends on air, not on a line. */
+.row {
+  border-bottom: 1px solid var(--border);
+  transition: background-color 120ms ease;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+@media (hover: hover) {
+  .row:hover {
+    background: color-mix(in srgb, var(--bg-hover) 55%, transparent);
+  }
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  border-radius: 6px;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* A button sitting on the reading surface has to follow the paper palette. The
+   plain .btn is app chrome — on sepia it renders as a black slab with brown
+   text on it. Applied by opting in, not to every .btn inside .surface, because
+   the translation popup is deliberately dark and wants the chrome styling. */
+.btn-paper {
+  background: transparent;
+  border-color: var(--paper-line);
+  color: var(--paper-ink);
+}
+
+.btn-paper:hover:not(:disabled) {
+  background: var(--paper-line);
+  border-color: var(--paper-line);
+}
+
+.btn-primary {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: #fbfdfa;
+  font-weight: 500;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* A filter or category pill. Unselected it is only a word; selected it fills
+   with a wash of the accent rather than shouting in full strength. */
+.chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  white-space: nowrap;
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.chip[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--accent);
+}
+
+/* Underlined, not boxed: the field is a line you write on. */
+.field {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border-strong);
+  border-radius: 0;
+  padding: 0.5rem 0.15rem;
+  outline: none;
+}
+
+.field::placeholder {
+  color: var(--text-dim);
+}
+
+.field:focus {
+  border-bottom-color: var(--accent);
+}
+
+/* Activity calendar on the progress page. */
+.heat-cell {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--bg-hover);
+  flex: none;
+}
+
+.heat-cell[data-level="1"] { background: color-mix(in srgb, var(--accent) 28%, var(--bg-hover)); }
+.heat-cell[data-level="2"] { background: color-mix(in srgb, var(--accent) 50%, var(--bg-hover)); }
+.heat-cell[data-level="3"] { background: color-mix(in srgb, var(--accent) 74%, var(--bg-hover)); }
+.heat-cell[data-level="4"] { background: var(--accent); }
+
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.pop-in {
+  animation: popIn 120ms ease-out;
+}
+
+@keyframes popIn {
+  from { opacity: 0; transform: translateY(4px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+.scroll-thin::-webkit-scrollbar { width: 10px; height: 10px; }
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 99px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.scroll-thin::-webkit-scrollbar-track { background: transparent; }

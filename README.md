@@ -1,36 +1,218 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Mountain
 
-## Getting Started
+Read English e-books and understand every word. Tap any word for an instant
+Kazakh translation plus a real explanation — pronunciation, part of speech,
+English definitions, and an example. Select a phrase or sentence to translate
+the whole thing.
 
-First, run the development server:
+## Running it
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev      # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+For a production run:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run build
+npm start
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+No API keys and no signup. Everything is stored on the server in `data/`
+(`reader.db` plus the original book files), which is gitignored.
 
-## Learn More
+Each browser gets its own library. On first visit a random token goes into a
+cookie and an account is opened behind it — nothing to fill in, and every book,
+saved word and streak belongs to that account from then on. Clearing the cookie
+means starting over, so treat it the way you would a password: the `users.email`
+column is where a claimed account would attach itself to a person, but nothing
+fills it in yet.
 
-To learn more about Next.js, take a look at the following resources:
+Upgrading a database from before accounts existed: the migration runs
+automatically at startup, parks the whole existing library in an account nobody
+holds yet, and prints a one-time claim link to the server log:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```
+/claim?code=7342bce6…
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Open that once in the browser you read in and the library is yours. The code is
+spent on use and is not stored anywhere else, so nothing can inherit your books
+by simply being the first request to arrive — which is what a health check or a
+crawler would otherwise do.
 
-## Deploy on Vercel
+## What it does
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+**Getting books in**
+- Drag an **EPUB, PDF, TXT, or subtitle file (SRT/VTT)** onto the library page
+  (60 MB limit). Subtitles are re-flowed from screen-sized cues back into
+  paragraphs, so a transcript reads like prose.
+- Paste **a link to any article** and the readable text is pulled out of the
+  page and stored like any other book.
+- Or open **Browse** and pull public-domain titles straight from Project
+  Gutenberg — search, pick one, and it opens in the reader.
+- Every book can be downloaded again from the library or the reader's `⤓`
+  button. Uploads give you back the exact file you put in.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+**Reading**
+- Every word is its own tap target. Tapping opens a card with the translation,
+  IPA pronunciation, a 🔊 button (browser speech synthesis), dictionary senses,
+  usage examples, synonyms, and how many times the word occurs in this book.
+- The first English definition is also translated, so you are never stuck
+  reading an explanation in the language you are still learning.
+- The card offers **"Translate the whole sentence"** for the sentence the word
+  sits in, and highlighting any passage translates that passage directly.
+- **Read aloud** (`▶`) speaks the chapter with the current word highlighted,
+  scrolling to keep up. Speed is adjustable and remembered.
+- **Search inside the book** (`⌕` or `⌘F`) over a SQLite FTS5 index; a result
+  jumps to the chapter and flashes the word.
+- Light / sepia / dark themes, adjustable text size, line spacing, column
+  width, and serif/sans. Settings persist in `localStorage`.
+- Reading position is saved per book automatically; the library shows a
+  progress bar and where you left off. `←` / `→` move between chapters.
+
+**Knowing which words you know**
+- Mark a word **"I know it"** and it fades into the background of the text —
+  still readable, no longer competing for attention.
+- Every book is counted by lemma at import, so the library can tell you
+  **"74% known words"** per book. Above ~95% a book reads smoothly; below ~90%
+  it is a slog. That number is the fastest way to pick the right next book.
+- Each book also offers its **commonest words you don't know yet** — the
+  highest-value twenty words to learn before starting it.
+- Start from the built-in common-word list on the **Progress** page instead of
+  from zero.
+
+**Learning**
+- "Save to vocabulary" stores the word with its translation and the sentence
+  you met it in. Saved words stay underlined in the text.
+- One saved word becomes up to **three cards**, each scheduled separately:
+  *recognise* (English → your language), *produce* (the harder direction, where
+  recall is actually built), and *cloze* — the sentence you met the word in
+  with the word blanked out.
+- Five Leitner boxes: a miss returns the card in 10 minutes, and correct
+  answers push it out to 1, 3, 7, then 21 days. A card that survives the top
+  box graduates into your known words and starts counting towards coverage.
+- **Export** the whole vocabulary as tab-separated text Anki imports directly,
+  or as CSV.
+
+**Progress**
+- Streak, time actually spent reading (counted only while the tab is visible),
+  words read, review accuracy, and a twelve-week activity calendar.
+
+**Appearance**
+- The app follows your system light/dark setting. The `◐` button in the nav
+  cycles system → light → dark and pins your choice; an inline script in the
+  layout applies it during HTML parsing, so a pinned theme never flashes the
+  wrong one on load.
+- The reader's paper (light / sepia / dark) is chosen separately in its own
+  settings — what reads well behind a page of prose is not what reads well
+  behind a library.
+
+**Offline**
+- Installable as a PWA. Chapters you have already opened, and your known-word
+  list, are cached — a book you were reading stays readable with no connection.
+  Writes and translation still need the network, and say so rather than
+  silently returning something stale.
+
+## How it is put together
+
+Next.js 16 (App Router) + TypeScript + Tailwind v4, with SQLite through Node's
+built-in `node:sqlite` — so there is no native module to compile and no
+database server to run.
+
+| Path | Role |
+| --- | --- |
+| `src/lib/db.ts` | Schema and migrations, run once on first import |
+| `src/lib/ingest.ts` | EPUB (JSZip + OPF spine), PDF (pdfjs), TXT and SRT/VTT → chapters |
+| `src/lib/article.ts` | Pulls the readable article out of a web page |
+| `src/lib/books.ts` | Library queries, saving, Gutenberg search and import |
+| `src/lib/lemma.ts` | Rule-based English lemmatiser — runs on both server and client |
+| `src/lib/words.ts` | Word index, book coverage, known words, full-text search |
+| `src/lib/srs.ts` | Card generation and the Leitner schedule |
+| `src/lib/stats.ts` | Reading time, streaks, review history |
+| `src/lib/translate.ts` | Translation providers, dictionary lookup, caching |
+| `src/lib/text-dom.ts` | Wraps words in tap targets, finds the sentence under a word |
+| `src/components/Reader.tsx` | The reading surface |
+| `src/components/useReadAlong.ts` | Speech synthesis with word-level highlighting |
+| `src/components/TranslationCard.tsx` | The popup |
+| `public/sw.js` | Offline cache for chapters and the app shell |
+
+### Counting words without a dictionary
+
+Coverage and flashcards both need to know that "ran", "running" and "runs" are
+one word. `lemma.ts` does that with an irregular-form table plus suffix rules —
+no download, no dependency, and it runs unchanged in the browser so the reader
+can decide what to fade without a round trip per word.
+
+Suffix stripping is ambiguous: "loved" could stem to `lov` or `love`. So the
+lemmatiser returns candidates in priority order and picks the first one that
+appears in a lexicon it is handed. When indexing a book, that lexicon is the
+book's own vocabulary — a text containing "loved" almost always contains "love"
+somewhere too, which settles the ambiguity from the text itself.
+
+Contractions are reduced to their head word (`don't` → `do`, `won't` → `will`),
+without which every contraction in a book is a word you can never learn.
+
+`INDEX_VERSION` in `words.ts` guards the stored counts: bump it when the rules
+change and every book re-counts itself on next read.
+
+Books are parsed **on the server at import time** into sanitized HTML chapters
+rather than rendered through an EPUB iframe. That is what makes per-word
+tapping and text selection reliable — the reader owns the DOM. Incoming markup
+is run through `sanitize-html` with a structural-tags-only allowlist, so no
+scripts, styles, classes, or remote resources survive.
+
+### Translation providers
+
+`src/lib/translate.ts` tries providers in order and takes the first that
+answers:
+
+1. Google's public `translate_a/single` endpoint
+2. MyMemory (`api.mymemory.translated.net`)
+
+Definitions come from `api.dictionaryapi.dev`. All three are free and need no
+key, and results are cached in SQLite for 30 days, so re-reading a page costs
+nothing.
+
+**Worth knowing:** the Google endpoint is undocumented and unofficial. It is
+fine for personal and small-scale use, but it can rate-limit or change without
+notice — so it is not something to build a public launch on. `PROVIDERS` in
+`translate.ts` is a plain array of `{ name, translate }`; swapping in an
+official paid API (Google Cloud Translation, DeepL) or an LLM for
+context-aware explanations means adding one entry there and nothing else.
+
+Target language is switchable in the reader's header — Kazakh is the default,
+with Russian, Turkish, German, French, Spanish, Chinese, and Arabic also
+wired up.
+
+## Limits
+
+- **Anonymous accounts, no login.** Every row is scoped to an account, but the
+  cookie is the only credential and there is no way to get back into an account
+  from a second device or a cleared browser. Real sign-in — a magic link
+  writing to `users.email` — is the missing piece.
+- **No upload quotas.** Anyone who can reach the server can spend its disk, 60
+  MB at a time, and its translation-provider calls. A public deployment needs a
+  rate limit in front of `/api/upload` and `/api/translate`.
+- **A book is stored per account.** Ten readers importing the same title means
+  ten copies of the text. Fine for a handful of people, wasteful beyond that;
+  de-duplicating means content-addressed books plus a library join table.
+- **Scanned PDFs do not work** — there is no OCR, so a PDF must contain real
+  selectable text. You get a clear error if it does not.
+- Chapter splitting for plain text is heuristic (it looks for `CHAPTER`,
+  roman numerals, and all-caps lines), so a TXT file with unusual formatting
+  may divide oddly. EPUBs use their real spine and are always accurate.
+- The lemmatiser is rules plus a table of irregulars, not a full dictionary. It
+  handles ordinary inflection well and will occasionally mis-stem an unusual
+  word, which costs a fraction of a percent on a coverage figure.
+- The common-word seed list is ~700 hand-ordered words, enough to make coverage
+  meaningful on day one — not a frequency-ranked corpus.
+- Article extraction keeps the prose blocks of a page. It handles articles,
+  posts and documentation; a heavily scripted app that renders its text with
+  JavaScript will come back empty, and says so.
+- Read-aloud uses the browser's own voices, so quality varies by platform.
+  Word-level highlighting needs `onboundary` events, which not every engine
+  fires — where they are missing the paragraph is highlighted instead.
+- Only add books you have the right to use — your own files, or public-domain
+  works from the Gutenberg catalog.

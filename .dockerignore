@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+.claude
+
+# The reader's own library and database. This is local state that belongs on
+# the mounted volume, never baked into an image.
+data
+
+npm-debug.log*
+.DS_Store
+.env*
+*.tsbuildinfo
+README.md
