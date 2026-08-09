@@ -67,8 +67,28 @@ export async function GET() {
     database = { ok: false, error: describe(err) };
   }
 
+  // Which of the outside world this deployment is allowed to talk to. A
+  // datacentre address is treated differently from a laptop by some hosts, and
+  // that is not something the code can be inspected for.
+  const outbound: Record<string, string> = {};
+  for (const [name, target] of [
+    ["gutendex", "https://gutendex.com/books?search=test"],
+    ["gutenberg", "https://www.gutenberg.org/cache/epub/84/pg84.txt"],
+    ["translate", "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=kk&dt=t&q=test"],
+  ] as const) {
+    try {
+      const res = await fetch(target, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; MountainReader/1.0)" },
+        signal: AbortSignal.timeout(8000),
+      });
+      outbound[name] = `HTTP ${res.status}`;
+    } catch (err) {
+      outbound[name] = describe(err);
+    }
+  }
+
   const ok = Object.values(imports).every((v) => v === "ok");
-  return NextResponse.json({ ok, env, imports, database }, { status: ok ? 200 : 503 });
+  return NextResponse.json({ ok, env, imports, database, outbound }, { status: ok ? 200 : 503 });
 }
 
 /** Errors from a failed import carry the useful part in `cause`, not the message. */
