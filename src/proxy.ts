@@ -70,9 +70,14 @@ async function lockedOut(request: NextRequest): Promise<NextResponse | null> {
     return NextResponse.json({ error: "Locked." }, { status: 401 });
   }
 
+  // The query string is part of where they were going, not decoration: a claim
+  // link is nothing but its code, and dropping it here would send the reader
+  // back to a /claim that has forgotten what it was claiming.
+  const wanted = pathname + request.nextUrl.search;
+
   const unlock = request.nextUrl.clone();
   unlock.pathname = "/unlock";
-  unlock.search = pathname === "/" ? "" : `?next=${encodeURIComponent(pathname)}`;
+  unlock.search = wanted === "/" ? "" : `?next=${encodeURIComponent(wanted)}`;
   return NextResponse.redirect(unlock);
 }
 
