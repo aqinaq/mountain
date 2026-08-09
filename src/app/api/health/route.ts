@@ -21,6 +21,7 @@ export async function GET() {
     TURSO_AUTH_TOKEN: token ? { set: true, length: token.length } : { set: false },
     MOUNTAIN_PASSWORD: { set: Boolean(process.env.MOUNTAIN_PASSWORD) },
     VERCEL_REGION: process.env.VERCEL_REGION ?? null,
+    node: process.version,
   };
 
   // Third-party first, then this project's modules in dependency order, so the
