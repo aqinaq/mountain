@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { SESSION_COOKIE, SESSION_MAX_AGE } from "@/lib/session-cookie";
-import { GATE_COOKIE, gateKey, gatePassword, sameSecret } from "@/lib/gate";
 
 /**
  * Hands every visitor a session cookie before the app sees the request.
@@ -17,10 +16,7 @@ import { GATE_COOKIE, gateKey, gatePassword, sameSecret } from "@/lib/gate";
  * possibly on other infrastructure; the matching account row is created lazily
  * the first time `lib/session.ts` sees a token it does not recognise.
  */
-export async function proxy(request: NextRequest) {
-  const locked = await lockedOut(request);
-  if (locked) return locked;
-
+export function proxy(request: NextRequest) {
   if (request.cookies.has(SESSION_COOKIE)) return NextResponse.next();
 
   const token = mintToken();
@@ -41,44 +37,6 @@ export async function proxy(request: NextRequest) {
     secure: process.env.NODE_ENV === "production",
   });
   return response;
-}
-
-/**
- * Turn away anyone who does not know the password, or nothing if there is no
- * password to know.
- *
- * This runs before the session cookie is minted on purpose. Minting one for a
- * locked-out request would open an account for every knock at the door, which
- * is the cost the gate exists to avoid.
- */
-async function lockedOut(request: NextRequest): Promise<NextResponse | null> {
-  const password = gatePassword();
-  if (!password) return null;
-
-  // The unlock form is the one thing a locked-out browser has to be able to
-  // reach, or there is no way through the gate.
-  const { pathname } = request.nextUrl;
-  if (pathname === "/unlock" || pathname === "/api/unlock") return null;
-
-  const held = request.cookies.get(GATE_COOKIE)?.value;
-  if (held && sameSecret(held, await gateKey(password))) return null;
-
-  // An API call is something the app made, not something a reader navigated
-  // to; redirecting it to an HTML form would only produce a confusing parse
-  // error wherever the response was awaited.
-  if (pathname.startsWith("/api/")) {
-    return NextResponse.json({ error: "Locked." }, { status: 401 });
-  }
-
-  // The query string is part of where they were going, not decoration: a claim
-  // link is nothing but its code, and dropping it here would send the reader
-  // back to a /claim that has forgotten what it was claiming.
-  const wanted = pathname + request.nextUrl.search;
-
-  const unlock = request.nextUrl.clone();
-  unlock.pathname = "/unlock";
-  unlock.search = wanted === "/" ? "" : `?next=${encodeURIComponent(wanted)}`;
-  return NextResponse.redirect(unlock);
 }
 
 /** 256 bits from the platform CSPRNG, URL-safe so it survives a cookie header. */
