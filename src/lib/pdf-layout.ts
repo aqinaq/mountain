@@ -603,7 +603,39 @@ function chaptersFromBlocks(blocks: Block[], stats: Stats): ParsedChapter[] {
 /* entry point                                                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * pdf.js reaches for `DOMMatrix` as it loads, and on some Node hosts — Vercel's
+ * among them, though not a local Node of the same version — it is not there, so
+ * the import throws before any of it can be used.
+ *
+ * Nothing below renders anything: this reads the geometry out of the text
+ * layer, and the matrix maths it does use is pdf.js's own. So the class only
+ * has to exist for the module to finish loading. It is deliberately not an
+ * implementation — a wrong one would be worse than an absent one — and it is
+ * only installed when the platform has not supplied the real thing.
+ */
+export function ensureDomMatrix(): void {
+  const g = globalThis as { DOMMatrix?: unknown };
+  if (g.DOMMatrix) return;
+
+  g.DOMMatrix = class {
+    a = 1;
+    b = 0;
+    c = 0;
+    d = 1;
+    e = 0;
+    f = 0;
+
+    constructor(init?: number[]) {
+      if (Array.isArray(init) && init.length === 6) {
+        [this.a, this.b, this.c, this.d, this.e, this.f] = init;
+      }
+    }
+  };
+}
+
 export async function parsePdf(buf: Buffer, fallbackTitle: string): Promise<ParsedBook> {
+  ensureDomMatrix();
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const task = pdfjs.getDocument({ data: new Uint8Array(buf), useSystemFonts: true });
   const doc = await task.promise;

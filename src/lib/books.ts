@@ -270,6 +270,19 @@ export async function importFromUrl(userId: number, url: string): Promise<number
 
 /* ---------------------- Project Gutenberg (public domain) ---------------------- */
 
+/**
+ * Identify ourselves to the catalogue.
+ *
+ * An unnamed request from a datacentre address is what a scraper looks like,
+ * and gutendex answers those with a 403 — which is what it did to the first
+ * deployment, while the same request from a laptop was let through. The
+ * download path further down already sent a name; the search did not.
+ */
+const CATALOG_HEADERS = {
+  Accept: "application/json",
+  "User-Agent": "Mozilla/5.0 (compatible; MountainReader/1.0)",
+};
+
 export type CatalogBook = {
   id: number;
   title: string;
@@ -317,7 +330,7 @@ export async function searchCatalog(query: string, page: number): Promise<{ book
   if (query.trim()) url.searchParams.set("search", query.trim());
   else url.searchParams.set("sort", "popular");
 
-  const res = await fetch(url, { cache: "no-store", headers: { Accept: "application/json" } });
+  const res = await fetch(url, { cache: "no-store", headers: CATALOG_HEADERS });
   if (!res.ok) throw new Error(`Gutenberg catalog is unavailable (HTTP ${res.status}).`);
   const data = (await res.json()) as { results?: GutendexBook[]; next?: string | null };
 
@@ -345,7 +358,10 @@ export async function importFromGutenberg(userId: number, gutenbergId: number): 
   );
   if (existing) return existing.id;
 
-  const res = await fetch(`https://gutendex.com/books/${gutenbergId}`, { cache: "no-store" });
+  const res = await fetch(`https://gutendex.com/books/${gutenbergId}`, {
+    cache: "no-store",
+    headers: CATALOG_HEADERS,
+  });
   if (!res.ok) throw new Error(`Book ${gutenbergId} was not found in the Gutenberg catalog.`);
   const meta = mapGutendex((await res.json()) as GutendexBook);
 

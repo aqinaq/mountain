@@ -31,7 +31,16 @@ export async function GET() {
     ["jszip", () => import("jszip")],
     ["fast-xml-parser", () => import("fast-xml-parser")],
     ["sanitize-html", () => import("sanitize-html")],
-    ["pdfjs-dist", () => import("pdfjs-dist/legacy/build/pdf.mjs")],
+    [
+      // Through the shim, because that is how parsePdf loads it — importing it
+      // raw here would report a failure the app never actually hits.
+      "pdfjs-dist",
+      async () => {
+        const { ensureDomMatrix } = await import("@/lib/pdf-layout");
+        ensureDomMatrix();
+        return import("pdfjs-dist/legacy/build/pdf.mjs");
+      },
+    ],
     ["lib/ingest", () => import("@/lib/ingest")],
     ["lib/pdf-layout", () => import("@/lib/pdf-layout")],
     ["lib/words", () => import("@/lib/words")],
