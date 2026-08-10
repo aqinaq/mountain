@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import type { CatalogBook } from "@/lib/books";
+import { searchCatalog, type CatalogBook } from "@/lib/gutendex";
 
 const SHELVES = ["", "adventure", "detective", "romance", "science fiction", "short stories", "philosophy"];
 
@@ -48,13 +48,13 @@ export default function Catalog() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError("");
-    fetch(`/api/catalog?q=${encodeURIComponent(query)}&page=${page}`)
-      .then((r) => r.json())
+    // Straight to gutendex from here rather than through our own server: it
+    // refuses the deployment's address and accepts the reader's.
+    searchCatalog(query, page)
       .then((data) => {
         if (id !== reqId.current) return; // a newer search superseded this one
-        if (data.error) throw new Error(data.error);
-        setBooks(data.books ?? []);
-        setHasMore(Boolean(data.hasMore));
+        setBooks(data.books);
+        setHasMore(data.hasMore);
       })
       .catch((err: unknown) => {
         if (id !== reqId.current) return;
@@ -79,7 +79,7 @@ export default function Catalog() {
       const res = await fetch("/api/catalog/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gutenbergId: book.id }),
+        // The whole description, because the server cannot look it up itself.\n        body: JSON.stringify(book),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Import failed.");

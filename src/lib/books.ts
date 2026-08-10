@@ -1,5 +1,6 @@
 import path from "node:path";
 import { getDb, plain, plainAll } from "./db";
+import { isGutenbergUrl, type CatalogBook } from "./gutendex";
 import { countWords, parseEpub, parseSubtitles, parseText, type ParsedBook } from "./ingest";
 import { parsePdf } from "./pdf-layout";
 import { coverageByBook, indexBook, indexPending } from "./words";
@@ -270,76 +271,6 @@ export async function importFromUrl(userId: number, url: string): Promise<number
 
 /* ---------------------- Project Gutenberg (public domain) ---------------------- */
 
-/**
- * Identify ourselves to the catalogue.
- *
- * An unnamed request from a datacentre address is what a scraper looks like,
- * and gutendex answers those with a 403 — which is what it did to the first
- * deployment, while the same request from a laptop was let through. The
- * download path further down already sent a name; the search did not.
- */
-const CATALOG_HEADERS = {
-  Accept: "application/json",
-  "User-Agent": "Mozilla/5.0 (compatible; MountainReader/1.0)",
-};
-
-export type CatalogBook = {
-  id: number;
-  title: string;
-  authors: string;
-  languages: string[];
-  subjects: string[];
-  downloadCount: number;
-  coverUrl?: string;
-  epubUrl?: string;
-  textUrl?: string;
-};
-
-type GutendexBook = {
-  id: number;
-  title: string;
-  authors?: { name?: string }[];
-  languages?: string[];
-  subjects?: string[];
-  download_count?: number;
-  formats?: Record<string, string>;
-};
-
-function mapGutendex(b: GutendexBook): CatalogBook {
-  const f = b.formats ?? {};
-  const pick = (test: (k: string) => boolean) =>
-    Object.entries(f).find(([k, v]) => test(k) && !v.endsWith(".zip"))?.[1];
-
-  return {
-    id: b.id,
-    title: b.title,
-    authors: (b.authors ?? []).map((a) => a.name).filter(Boolean).join(", ") || "Unknown",
-    languages: b.languages ?? [],
-    subjects: (b.subjects ?? []).slice(0, 4),
-    downloadCount: b.download_count ?? 0,
-    coverUrl: pick((k) => k.startsWith("image/")),
-    epubUrl: pick((k) => k.includes("epub")),
-    textUrl: pick((k) => k.startsWith("text/plain")),
-  };
-}
-
-export async function searchCatalog(query: string, page: number): Promise<{ books: CatalogBook[]; hasMore: boolean }> {
-  const url = new URL("https://gutendex.com/books");
-  url.searchParams.set("languages", "en");
-  url.searchParams.set("page", String(Math.max(1, page)));
-  if (query.trim()) url.searchParams.set("search", query.trim());
-  else url.searchParams.set("sort", "popular");
-
-  const res = await fetch(url, { cache: "no-store", headers: CATALOG_HEADERS });
-  if (!res.ok) throw new Error(`Gutenberg catalog is unavailable (HTTP ${res.status}).`);
-  const data = (await res.json()) as { results?: GutendexBook[]; next?: string | null };
-
-  return {
-    books: (data.results ?? []).map(mapGutendex),
-    hasMore: Boolean(data.next),
-  };
-}
-
 async function download(url: string): Promise<Buffer> {
   const res = await fetch(url, {
     cache: "no-store",
@@ -349,7 +280,17 @@ async function download(url: string): Promise<Buffer> {
   return Buffer.from(await res.arrayBuffer());
 }
 
-export async function importFromGutenberg(userId: number, gutenbergId: number): Promise<number> {
+/**
+ * Fetch and ingest a catalogue book.
+ *
+ * The description arrives from the browser, which is what did the catalogue
+ * lookup — the server cannot, being answered with 403. Only the download
+ * addresses matter for safety and they are checked against Gutenberg before
+ * anything is fetched; the title and cover are the reader's own to be wrong
+ * about, exactly as they are for an upload.
+ */
+export async function importFromGutenberg(userId: number, meta: CatalogBook): Promise<number> {
+  const gutenbergId = meta.id;
   const db = await getDb();
   const existing = await db.get<{ id: number }>(
     "SELECT id FROM books WHERE user_id = ? AND source = 'gutenberg' AND source_id = ?",
@@ -358,18 +299,11 @@ export async function importFromGutenberg(userId: number, gutenbergId: number): 
   );
   if (existing) return existing.id;
 
-  const res = await fetch(`https://gutendex.com/books/${gutenbergId}`, {
-    cache: "no-store",
-    headers: CATALOG_HEADERS,
-  });
-  if (!res.ok) throw new Error(`Book ${gutenbergId} was not found in the Gutenberg catalog.`);
-  const meta = mapGutendex((await res.json()) as GutendexBook);
-
   // EPUB keeps the chapter structure; plain text is the fallback.
   let parsed: ParsedBook | null = null;
   let original: { buffer: Buffer; ext: string } | undefined;
 
-  if (meta.epubUrl) {
+  if (isGutenbergUrl(meta.epubUrl)) {
     try {
       const buf = await download(meta.epubUrl);
       parsed = await parseEpub(buf);
@@ -378,7 +312,7 @@ export async function importFromGutenberg(userId: number, gutenbergId: number): 
       parsed = null;
     }
   }
-  if (!parsed && meta.textUrl) {
+  if (!parsed && isGutenbergUrl(meta.textUrl)) {
     const buf = await download(meta.textUrl);
     parsed = parseText(buf.toString("utf8"), meta.title);
     original = { buffer: buf, ext: "txt" };
