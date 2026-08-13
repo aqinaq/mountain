@@ -634,9 +634,42 @@ export function ensureDomMatrix(): void {
   };
 }
 
+type PdfjsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
+
+let loading: Promise<PdfjsModule> | null = null;
+
+/**
+ * pdf.js with everything it needs already in hand.
+ *
+ * On Node there is no `Worker`, so pdf.js runs the worker on the main thread —
+ * and it fetches it with `import(GlobalWorkerOptions.workerSrc)`, a specifier
+ * built at runtime that no bundler or file tracer can follow. Locally that is
+ * harmless, because the whole package is on disk. On Vercel only the traced
+ * files are deployed, `pdf.worker.mjs` is not among them, and the import fails
+ * with a "Setting up fake worker failed" ENOENT inside `/var/task`.
+ *
+ * Loading the worker here instead fixes both halves at once: `globalThis
+ * .pdfjsWorker` is the hook pdf.js checks before it goes looking for a file, so
+ * the computed import never runs, and this specifier is a literal one the trace
+ * can see. `next.config.ts` also names the file outright — belt and braces,
+ * since the failure only shows up in production.
+ *
+ * pdf.js memoises its worker lookup on first use, so the assignment has to
+ * happen before the first `getDocument`, which is why every caller comes
+ * through here.
+ */
+export async function loadPdfjs(): Promise<PdfjsModule> {
+  loading ??= (async () => {
+    ensureDomMatrix();
+    const g = globalThis as { pdfjsWorker?: unknown };
+    g.pdfjsWorker ??= await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
+    return import("pdfjs-dist/legacy/build/pdf.mjs");
+  })();
+  return loading;
+}
+
 export async function parsePdf(buf: Buffer, fallbackTitle: string): Promise<ParsedBook> {
-  ensureDomMatrix();
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const pdfjs = await loadPdfjs();
   const task = pdfjs.getDocument({ data: new Uint8Array(buf), useSystemFonts: true });
   const doc = await task.promise;
 

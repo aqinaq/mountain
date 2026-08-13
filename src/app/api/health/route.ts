@@ -32,13 +32,13 @@ export async function GET() {
     ["fast-xml-parser", () => import("fast-xml-parser")],
     ["sanitize-html", () => import("sanitize-html")],
     [
-      // Through the shim, because that is how parsePdf loads it — importing it
-      // raw here would report a failure the app never actually hits.
+      // Through the loader, because that is how parsePdf gets it — importing it
+      // raw here would miss the worker, which is the half that goes missing in
+      // a deployment.
       "pdfjs-dist",
       async () => {
-        const { ensureDomMatrix } = await import("@/lib/pdf-layout");
-        ensureDomMatrix();
-        return import("pdfjs-dist/legacy/build/pdf.mjs");
+        const { loadPdfjs } = await import("@/lib/pdf-layout");
+        return loadPdfjs();
       },
     ],
     ["lib/ingest", () => import("@/lib/ingest")],

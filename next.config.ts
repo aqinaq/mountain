@@ -10,6 +10,18 @@ const nextConfig: NextConfig = {
   // build resolves that itself and the question never arises.
   serverExternalPackages: ["pdfjs-dist", "jszip"],
 
+  // pdf.js loads its worker by a path it assembles at runtime, so nothing in
+  // the build sees that this file is needed and it is left out of the deployed
+  // bundle. `loadPdfjs` imports it by a name the trace can follow, which should
+  // be enough on its own; this says so outright as well, because the failure it
+  // guards against only appears in a deployment. Upload is the only route that
+  // reads a PDF, and health is the one that checks it still can — the file is
+  // 2.4 MB, so nothing else carries it.
+  outputFileTracingIncludes: {
+    "/api/upload": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"],
+    "/api/health": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"],
+  },
+
   async headers() {
     return [
       {
