@@ -9,11 +9,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/test-hooks.mjs --test 'src/**/*.test.ts'"
   },
   "dependencies": {
     "@libsql/client": "^0.17.4",
     "fast-xml-parser": "^5.10.1",
+    "htmlparser2": "^12.0.0",
     "jszip": "^3.10.1",
     "next": "16.3.0",
     "pdfjs-dist": "^6.2.108",
