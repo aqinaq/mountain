@@ -93,8 +93,8 @@ export default function Catalog() {
   }, []);
 
   return (
-    <main className="mx-auto max-w-4xl px-5 py-12">
-      <h1 className="display text-[2.5rem] leading-[1.1]">Browse free books</h1>
+    <main className="page">
+      <h1 className="display text-[2rem] leading-[1.1] sm:text-[2.5rem]">Browse free books</h1>
       <p className="mt-3 max-w-md text-sm leading-relaxed text-[var(--text-dim)]">
         Public-domain titles from Project Gutenberg. Add as many as you like — they wait on your
         shelf until you choose to read them.
@@ -108,7 +108,8 @@ export default function Catalog() {
         }}
       >
         <input
-          className="field"
+          className="field min-w-0 flex-1"
+          type="search"
           placeholder="Search by title or author…"
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -144,7 +145,7 @@ export default function Catalog() {
       ) : (
         <ul className="sheet mt-8">
           {books.map((b) => (
-            <li key={b.id} className="row flex gap-5 px-2 py-5">
+            <li key={b.id} className="row flex gap-4 px-2 py-4 sm:gap-5 sm:py-5">
               <div className="h-[92px] w-[62px] shrink-0 overflow-hidden rounded-[3px] bg-[var(--bg-hover)] shadow-[0_2px_10px_-4px_rgb(60_44_22/0.4)]">
                 {b.coverUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -161,7 +162,7 @@ export default function Catalog() {
                   {b.subjects.join(" · ")}
                 </p>
 
-                <div className="mt-auto flex items-center gap-3 pt-3">
+                <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-2 pt-3">
                   {library[b.id] ? (
                     <>
                       <Link className="btn" href={`/read/${library[b.id]}`}>

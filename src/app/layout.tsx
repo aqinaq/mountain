@@ -10,7 +10,10 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     title: "Mountain",
-    statusBarStyle: "black-translucent",
+    // Not "black-translucent". That style paints the clock and the battery in
+    // white over whatever the page puts under them, and the app now opens
+    // light whatever the phone is set to — white on #f3f7f3 is nothing at all.
+    statusBarStyle: "default",
   },
   icons: {
     icon: "/icon-192.png",
@@ -19,11 +22,10 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  // Two values so the browser chrome matches whichever palette is showing.
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f3f7f3" },
-    { media: "(prefers-color-scheme: dark)", color: "#0e1511" },
-  ],
+  // One value, not a light/dark pair keyed off the machine: the app defaults to
+  // light whatever the machine says, and a pair would tint the toolbar dark
+  // around a light page. ThemeToggle rewrites this tag when the theme changes.
+  themeColor: "#f3f7f3",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -32,12 +34,13 @@ export const viewport: Viewport = {
 };
 
 /**
- * Applies a pinned theme while the HTML is still being parsed, before anything
- * is painted. Without it a reader who chose light gets a flash of dark on every
+ * Applies the theme while the HTML is still being parsed, before anything is
+ * painted. Without it a reader on a dark machine gets a flash of dark on every
  * load — the stored preference is not knowable until the client runs.
- * No stored value means "system", which needs no attribute at all.
+ * Only an explicit "system" hands the decision to `prefers-color-scheme`;
+ * anything else, including a first visit with nothing stored, is light.
  */
-const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem("mountain.theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}})()`;
+const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem("mountain.theme");if(t==="system")return;document.documentElement.setAttribute("data-theme",t==="dark"?"dark":"light")}catch(e){document.documentElement.setAttribute("data-theme","light")}})()`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

@@ -5,9 +5,12 @@ import { useCallback, useLayoutEffect, useState } from "react";
 /**
  * Light / dark / system for the app chrome.
  *
- * Three states, not two: "system" stores nothing and leaves `prefers-color-scheme`
- * in charge, so the app follows the machine as it changes through the day.
- * Choosing light or dark stamps `data-theme` on `<html>` and pins it.
+ * Three states, not two — but light is the one you get on a first visit, even on
+ * a machine set to dark. Following the system is a choice you make, not the
+ * default: the shelf is meant to look like paper under a lamp until you say
+ * otherwise. Light and dark stamp `data-theme` on `<html>` and pin it; "system"
+ * is stored as itself and removes the attribute, handing `prefers-color-scheme`
+ * back the decision.
  *
  * The reader's own paper theme (light / sepia / dark) is deliberately separate —
  * what you want behind a page of prose is not what you want behind a library.
@@ -18,7 +21,10 @@ export type Theme = "system" | "light" | "dark";
 /** Shared with the inline script in the layout; both must read the same key. */
 export const THEME_KEY = "mountain.theme";
 
-const ORDER: Theme[] = ["system", "light", "dark"];
+/** No stored choice means light, so nothing launches dark by accident. */
+export const DEFAULT_THEME: Theme = "light";
+
+const ORDER: Theme[] = ["light", "dark", "system"];
 
 const ICON: Record<Theme, string> = { system: "◐", light: "☀", dark: "☾" };
 const LABEL: Record<Theme, string> = {
@@ -30,16 +36,37 @@ const LABEL: Record<Theme, string> = {
 function readStored(): Theme {
   try {
     const stored = localStorage.getItem(THEME_KEY);
-    return stored === "light" || stored === "dark" ? stored : "system";
+    return stored === "light" || stored === "dark" || stored === "system"
+      ? stored
+      : DEFAULT_THEME;
   } catch {
-    return "system";
+    return DEFAULT_THEME;
   }
 }
+
+/** --bg for each palette, mirrored from globals.css for the toolbar tint. */
+const CHROME: Record<"light" | "dark", string> = {
+  light: "#f3f7f3",
+  dark: "#0e1511",
+};
 
 function apply(theme: Theme) {
   const root = document.documentElement;
   if (theme === "system") root.removeAttribute("data-theme");
   else root.setAttribute("data-theme", theme);
+
+  // Keep the browser's toolbar tint on the same palette as the page. Under
+  // "system" it is read once here rather than watched: the tint follows on the
+  // next load, which is as much as a static meta tag ever did.
+  const resolved =
+    theme === "system"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light"
+      : theme;
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute("content", CHROME[resolved]);
 }
 
 export default function ThemeToggle() {
@@ -47,7 +74,7 @@ export default function ThemeToggle() {
   // attribute the inline script already set. The icon is marked
   // suppressHydrationWarning because the server cannot know the stored value.
   const [theme, setTheme] = useState<Theme>(() =>
-    typeof window === "undefined" ? "system" : readStored(),
+    typeof window === "undefined" ? DEFAULT_THEME : readStored(),
   );
 
   // React's dev-only remount resets the attributes on <html>, wiping what the
@@ -60,8 +87,9 @@ export default function ThemeToggle() {
     setTheme((prev) => {
       const next = ORDER[(ORDER.indexOf(prev) + 1) % ORDER.length];
       try {
-        if (next === "system") localStorage.removeItem(THEME_KEY);
-        else localStorage.setItem(THEME_KEY, next);
+        // "system" is stored rather than cleared: an empty key now means
+        // "never chose", which is light.
+        localStorage.setItem(THEME_KEY, next);
       } catch {
         /* private mode: the choice just will not survive a reload */
       }
@@ -71,9 +99,11 @@ export default function ThemeToggle() {
   }, []);
 
   return (
+    // A one-glyph button is the easiest thing on the page to miss with a thumb,
+    // so the padding — not the glyph — is what carries the target.
     <button
       onClick={cycle}
-      className="ml-auto px-1 text-sm text-[var(--text-dim)] transition-colors hover:text-[var(--accent)]"
+      className="-mr-2 ml-auto px-2 py-2 text-base text-[var(--text-dim)] transition-colors hover:text-[var(--accent)] sm:mr-0 sm:px-1 sm:text-sm"
       title={`${LABEL[theme]} — click to change`}
       aria-label={LABEL[theme]}
     >

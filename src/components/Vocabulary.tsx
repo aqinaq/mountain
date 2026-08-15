@@ -82,10 +82,10 @@ export default function Vocabulary() {
   });
 
   return (
-    <main className="mx-auto max-w-4xl px-5 py-12">
+    <main className="page">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="display text-[2.5rem] leading-[1.1]">Vocabulary</h1>
+          <h1 className="display text-[2rem] leading-[1.1] sm:text-[2.5rem]">Vocabulary</h1>
           <p className="mt-3 max-w-md text-sm leading-relaxed text-[var(--text-dim)]">
             Every word you saved while reading.{" "}
             {due.total > 0 && `${due.total} card${due.total === 1 ? "" : "s"} ready to review.`}
@@ -143,7 +143,7 @@ export default function Vocabulary() {
 
           <ul className="mt-2">
             {visible.map((v) => (
-              <li key={v.id} className="row group flex items-start gap-4 px-2 py-4">
+              <li key={v.id} className="row flex items-start gap-4 px-2 py-4">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-baseline gap-x-3">
                     <span className="display text-[17px]">{v.term}</span>
@@ -163,7 +163,7 @@ export default function Vocabulary() {
                 </div>
                 <button
                   onClick={() => void remove(v.id)}
-                  className="shrink-0 text-[11px] text-[var(--text-dim)] underline underline-offset-4 opacity-0 transition-opacity hover:text-[var(--danger)] focus:opacity-100 group-hover:opacity-100"
+                  className="hover-reveal shrink-0 px-1 py-1 text-[11px] text-[var(--text-dim)] underline underline-offset-4 hover:text-[var(--danger)]"
                 >
                   Delete
                 </button>
@@ -230,7 +230,7 @@ function Review({ type, onExit }: { type: string | null; onExit: () => void }) {
 
   if (!card) {
     return (
-      <main className="mx-auto max-w-xl px-4 py-20 text-center">
+      <main className="mx-auto max-w-xl px-4 pt-20 pb-[calc(5rem_+_env(safe-area-inset-bottom))] text-center">
         <p className="text-3xl text-[var(--accent)]" aria-hidden>
           ✓
         </p>
@@ -250,9 +250,9 @@ function Review({ type, onExit }: { type: string | null; onExit: () => void }) {
   }
 
   return (
-    <main className="mx-auto max-w-xl px-4 py-10">
+    <main className="mx-auto max-w-xl px-4 pt-8 pb-[calc(2.5rem_+_env(safe-area-inset-bottom))] sm:pt-10">
       <div className="mb-6 flex items-center justify-between text-xs text-[var(--text-dim)]">
-        <button onClick={onExit} className="hover:text-[var(--text)]">
+        <button onClick={onExit} className="-ml-1 px-1 py-1 hover:text-[var(--text)]">
           ← Exit
         </button>
         <span>
@@ -283,7 +283,7 @@ function Review({ type, onExit }: { type: string | null; onExit: () => void }) {
         {card.promptIsEnglish && (
           <button
             onClick={() => speak(card.type === "cloze" ? card.context || card.term : card.prompt)}
-            className="px-2 py-1 text-sm text-[var(--text-dim)] hover:text-[var(--text)]"
+            className="px-3 py-2 text-sm text-[var(--text-dim)] hover:text-[var(--text)]"
             aria-label="Pronounce"
           >
             🔊

@@ -561,20 +561,49 @@ export default function Reader({
     ? Math.round(((idx + scrollPct) / chapters.length) * 100)
     : 0;
 
+  // Shared by the bar and the settings panel: the same control, shown in
+  // whichever of the two has the room on this screen.
+  const languageSelect = (className: string) => (
+    <select
+      value={settings.target}
+      onChange={(e) => update({ target: e.target.value })}
+      className={`rounded-lg border border-[var(--paper-line)] bg-transparent px-2 py-1.5 text-xs ${className}`}
+      title="Translate into"
+      aria-label="Translate into"
+    >
+      {LANGUAGES.map((l) => (
+        // No colour of its own: `color-scheme` on :root makes the browser
+        // render the native dropdown to match, and a pinned one would be
+        // unreadable in whichever theme it was not chosen for.
+        <option key={l.code} value={l.code}>
+          {l.label}
+        </option>
+      ))}
+    </select>
+  );
+
   return (
+    // The safe-area padding is on the frame rather than on the bar and the
+    // progress rule separately: `viewportFit: "cover"` means h-dvh runs under
+    // the status bar at one end and the home indicator at the other.
     <div
-      className="surface flex h-dvh flex-col"
+      className="surface flex h-dvh flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
       data-surface={settings.surface}
-      onMouseDown={() => {
+      onPointerDown={() => {
         if (anchor) closePopup();
       }}
     >
-      {/* ---------------- top bar ---------------- */}
-      <header className="z-30 flex shrink-0 items-center gap-2 border-b border-[var(--paper-line)] px-3 py-2">
+      {/* ---------------- top bar ----------------
+          Seven controls do not fit across a phone, and the title is what gets
+          squeezed out first. Downloading and the target language are the two
+          you touch least often, so on a narrow screen they move into the
+          settings panel and leave the title its width. */}
+      <header className="z-30 flex shrink-0 items-center gap-1 border-b border-[var(--paper-line)] px-2 py-1.5 sm:gap-2 sm:px-3 sm:py-2">
         <Link
           href="/"
-          className="rounded-lg px-2 py-1 text-sm text-[var(--paper-dim)] hover:bg-[var(--paper-line)]"
+          className="rounded-lg px-2.5 py-2 text-sm text-[var(--paper-dim)] hover:bg-[var(--paper-line)]"
           title="Back to library"
+          aria-label="Back to library"
         >
           ←
         </Link>
@@ -585,7 +614,7 @@ export default function Reader({
             setOpenChapter(idx);
             setTocOpen((v) => !v);
           }}
-          className="min-w-0 flex-1 truncate rounded-lg px-2 py-1 text-left text-sm hover:bg-[var(--paper-line)]"
+          className="min-w-0 flex-1 truncate rounded-lg px-2 py-2 text-left text-sm hover:bg-[var(--paper-line)]"
           title="Table of contents"
         >
           <span className="font-medium">{book.title}</span>
@@ -599,7 +628,7 @@ export default function Reader({
             setSearchOpen((v) => !v);
             setTocOpen(false);
           }}
-          className={`rounded-lg px-2 py-1 text-sm hover:bg-[var(--paper-line)] ${
+          className={`rounded-lg px-2.5 py-2 text-sm hover:bg-[var(--paper-line)] ${
             searchOpen ? "bg-[var(--paper-line)]" : "text-[var(--paper-dim)]"
           }`}
           title="Search inside this book"
@@ -611,7 +640,7 @@ export default function Reader({
         {readAlong.supported && (
           <button
             onClick={readAlong.toggle}
-            className={`rounded-lg px-2 py-1 text-sm hover:bg-[var(--paper-line)] ${
+            className={`rounded-lg px-2.5 py-2 text-sm hover:bg-[var(--paper-line)] ${
               readAlong.playing ? "bg-[var(--paper-line)]" : "text-[var(--paper-dim)]"
             }`}
             title={readAlong.playing ? "Stop reading aloud" : "Read this chapter aloud"}
@@ -621,25 +650,11 @@ export default function Reader({
           </button>
         )}
 
-        <select
-          value={settings.target}
-          onChange={(e) => update({ target: e.target.value })}
-          className="rounded-lg border border-[var(--paper-line)] bg-transparent px-2 py-1 text-xs"
-          title="Translate into"
-        >
-          {LANGUAGES.map((l) => (
-            // No colour of its own: `color-scheme` on :root makes the browser
-            // render the native dropdown to match, and a pinned one would be
-            // unreadable in whichever theme it was not chosen for.
-            <option key={l.code} value={l.code}>
-              {l.label}
-            </option>
-          ))}
-        </select>
+        {languageSelect("hidden sm:block")}
 
         <a
           href={`/api/books/${book.id}/download`}
-          className="rounded-lg px-2 py-1 text-sm text-[var(--paper-dim)] hover:bg-[var(--paper-line)]"
+          className="hidden rounded-lg px-2.5 py-2 text-sm text-[var(--paper-dim)] hover:bg-[var(--paper-line)] sm:block"
           title="Download this book"
         >
           ⤓
@@ -647,8 +662,11 @@ export default function Reader({
 
         <button
           onClick={() => setSettingsOpen((v) => !v)}
-          className="rounded-lg px-2 py-1 text-sm text-[var(--paper-dim)] hover:bg-[var(--paper-line)]"
+          className={`rounded-lg px-2.5 py-2 text-sm hover:bg-[var(--paper-line)] ${
+            settingsOpen ? "bg-[var(--paper-line)]" : "text-[var(--paper-dim)]"
+          }`}
           title="Reading settings"
+          aria-label="Reading settings"
         >
           Aa
         </button>
@@ -656,7 +674,10 @@ export default function Reader({
 
       {/* ---------------- settings ---------------- */}
       {settingsOpen && (
-        <div className="z-30 shrink-0 border-b border-[var(--paper-line)] px-4 py-3 text-sm">
+        // Capped and scrollable: opened on a phone the panel is tall enough to
+        // take the whole screen, and a settings panel that leaves no text
+        // behind it gives you nothing to judge the settings against.
+        <div className="scroll-thin z-30 max-h-[45dvh] shrink-0 overflow-y-auto border-b border-[var(--paper-line)] px-4 py-3 text-sm">
           <div className="mx-auto grid max-w-2xl gap-3 sm:grid-cols-2">
             <label className="flex items-center gap-3">
               <span className="w-20 shrink-0 text-[var(--paper-dim)]">Text size</span>
@@ -752,6 +773,19 @@ export default function Reader({
                 </span>
               </label>
             )}
+
+            {/* The two controls the narrow bar could not keep. */}
+            <label className="flex items-center gap-3 sm:hidden">
+              <span className="w-20 shrink-0 text-[var(--paper-dim)]">Translate into</span>
+              {languageSelect("flex-1")}
+            </label>
+
+            <div className="flex items-center gap-3 sm:hidden">
+              <span className="w-20 shrink-0 text-[var(--paper-dim)]">Original file</span>
+              <a className="btn btn-paper" href={`/api/books/${book.id}/download`}>
+                Download
+              </a>
+            </div>
           </div>
         </div>
       )}
@@ -769,7 +803,7 @@ export default function Reader({
                 if (e.key === "Enter" && results?.length) openHit(results[0]);
               }}
               placeholder="Search inside this book…"
-              className="w-full rounded-lg border border-[var(--paper-line)] bg-transparent px-3 py-2 text-sm outline-none focus:border-current"
+              className="w-full rounded-lg border border-[var(--paper-line)] bg-transparent px-3 py-2.5 text-sm outline-none focus:border-current"
             />
 
             {query.trim().length >= 2 && (
@@ -785,12 +819,14 @@ export default function Reader({
             )}
 
             {results && results.length > 0 && (
-              <ul className="scroll-thin mt-2 max-h-[38vh] overflow-y-auto">
+              // dvh, not vh: with the keyboard up on a phone, vh still measures
+              // the screen the keyboard is covering.
+              <ul className="scroll-thin mt-2 max-h-[38dvh] overflow-y-auto overscroll-contain">
                 {results.map((hit) => (
                   <li key={hit.idx}>
                     <button
                       onClick={() => openHit(hit)}
-                      className="w-full rounded-lg px-2 py-2 text-left hover:bg-[var(--paper-line)]"
+                      className="w-full rounded-lg px-2 py-2.5 text-left hover:bg-[var(--paper-line)]"
                     >
                       <span className="text-[10px] uppercase tracking-wide text-[var(--paper-dim)]">
                         {hit.title || `Chapter ${hit.idx + 1}`}
@@ -810,13 +846,17 @@ export default function Reader({
 
       {/* ---------------- table of contents ---------------- */}
       {tocOpen && (
-        <div className="absolute inset-0 z-40 flex" onMouseDown={() => setTocOpen(false)}>
+        // Fixed, not absolute: this drawer stands over the whole screen, and
+        // the frame it sits in is not a positioned ancestor. Pointer events
+        // rather than mouse ones, because iOS does not synthesise a mousedown
+        // for a tap on a plain div — the backdrop would swallow taps forever.
+        <div className="fixed inset-0 z-40 flex" onPointerDown={() => setTocOpen(false)}>
           <div
-            className="scroll-thin surface h-full w-[min(340px,85vw)] overflow-y-auto border-r border-[var(--paper-line)] shadow-2xl"
+            className="scroll-thin surface h-full w-[min(340px,85vw)] overflow-y-auto overscroll-contain border-r border-[var(--paper-line)] pb-[env(safe-area-inset-bottom)] shadow-2xl"
             data-surface={settings.surface}
-            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
           >
-            <p className="sticky top-0 border-b border-[var(--paper-line)] bg-[var(--paper)] px-4 py-3 text-xs uppercase tracking-wide text-[var(--paper-dim)]">
+            <p className="sticky top-0 border-b border-[var(--paper-line)] bg-[var(--paper)] px-4 pt-[calc(0.75rem_+_env(safe-area-inset-top))] pb-3 text-xs uppercase tracking-wide text-[var(--paper-dim)]">
               Contents · {chapters.length}
             </p>
             <ul className="py-1">
@@ -825,7 +865,7 @@ export default function Reader({
                   <div className="flex items-stretch">
                     <button
                       onClick={() => goTo(c.idx)}
-                      className={`min-w-0 flex-1 px-4 py-2 text-left text-sm hover:bg-[var(--paper-line)] ${
+                      className={`min-w-0 flex-1 px-4 py-2.5 text-left text-sm hover:bg-[var(--paper-line)] ${
                         c.idx === idx ? "font-semibold" : "text-[var(--paper-dim)]"
                       }`}
                     >
@@ -837,7 +877,7 @@ export default function Reader({
                         onClick={() =>
                           setOpenChapter((prev) => (prev === c.idx ? null : c.idx))
                         }
-                        className="shrink-0 px-3 text-[10px] text-[var(--paper-dim)] hover:bg-[var(--paper-line)]"
+                        className="shrink-0 px-4 text-[10px] text-[var(--paper-dim)] hover:bg-[var(--paper-line)]"
                         title={`${c.sections.length} sections`}
                         aria-expanded={openChapter === c.idx}
                       >
@@ -852,7 +892,7 @@ export default function Reader({
                         <li key={s.index}>
                           <button
                             onClick={() => goToSection(c.idx, s.index)}
-                            className="block w-full py-1.5 pr-4 pl-3 text-left text-xs text-[var(--paper-dim)] hover:bg-[var(--paper-line)] hover:text-[var(--paper-ink)]"
+                            className="block w-full py-2 pr-4 pl-3 text-left text-xs text-[var(--paper-dim)] hover:bg-[var(--paper-line)] hover:text-[var(--paper-ink)]"
                           >
                             {s.text}
                           </button>
@@ -869,10 +909,16 @@ export default function Reader({
       )}
 
       {/* ---------------- text ---------------- */}
-      <div ref={scrollerRef} className="scroll-thin relative flex-1 overflow-y-auto">
+      <div
+        ref={scrollerRef}
+        className="scroll-thin relative flex-1 overflow-y-auto overscroll-contain"
+      >
         <article
-          className="mx-auto px-5 pt-12 pb-16"
+          className="mx-auto px-5 pt-8 pb-16 sm:pt-12"
           style={{
+            // The width setting is a maximum, and on a phone it is never the
+            // binding one — the gutter is. Reading it as a max-width rather
+            // than a width is what keeps the text off both edges.
             maxWidth: settings.width,
             fontSize: settings.fontSize,
             lineHeight: settings.lineHeight,
