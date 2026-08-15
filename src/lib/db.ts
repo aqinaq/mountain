@@ -1,5 +1,4 @@
 import { createClient, type Client, type InArgs, type Row } from "@libsql/client";
-import { randomBytes } from "node:crypto";
 
 /**
  * The database, which is SQLite either way.
@@ -83,10 +82,79 @@ const api = {
     }
   },
 
+  /**
+   * A transaction that can be reasoned about between statements.
+   *
+   * `batch` covers writes that are decided in advance; this is for the ones
+   * where a write depends on what a read in the same transaction saw — handing
+   * over an account, say, where the code must still be unspent at the moment it
+   * is spent. Sending `BEGIN` as a statement of its own would not do it: over
+   * the network each `execute` is free to take a different connection, so the
+   * `BEGIN` and the `COMMIT` can end up in different sessions and the writes
+   * between them commit one by one. libSQL holds a stream open for this.
+   *
+   * The callback gets `all`/`get`/`run` and nothing else. Anything that returns
+   * before `commit` — an exception, an early return — leaves the transaction
+   * unclosed, so `close()` in `finally` rolls it back.
+   */
+  async transaction<T>(work: (tx: Tx) => Promise<T>): Promise<T> {
+    // One at a time within this process. Two transactions opened at once share
+    // the one connection, and their statements interleave between the same pair
+    // of BEGIN and COMMIT — locally that is an immediate "database is locked",
+    // and it is not something to leave to timing anywhere else. Queueing costs
+    // nothing: claiming an account is the only thing here that needs one.
+    const run = queue.then(
+      () => inTransaction(work),
+      () => inTransaction(work),
+    );
+    queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  },
+
   /** Several statements at once, for schema work only — no user data here. */
   async exec(sql: string): Promise<void> {
     await connection().executeMultiple(sql);
   },
+};
+
+/** Transactions run one after another; see `transaction` above. */
+let queue: Promise<void> = Promise.resolve();
+
+async function inTransaction<T>(work: (tx: Tx) => Promise<T>): Promise<T> {
+  const tx = await connection().transaction("write");
+  try {
+    const out = await work({
+      async all<R>(sql: string, ...args: unknown[]): Promise<R[]> {
+        const result = await tx.execute({ sql, args: args as InArgs });
+        return result.rows.map((row) => rowToObject<R>(row, result.columns));
+      },
+      async get<R>(sql: string, ...args: unknown[]): Promise<R | undefined> {
+        const result = await tx.execute({ sql, args: args as InArgs });
+        return result.rows.map((row) => rowToObject<R>(row, result.columns))[0];
+      },
+      async run(sql: string, ...args: unknown[]) {
+        const result = await tx.execute({ sql, args: args as InArgs });
+        return {
+          lastInsertRowid: Number(result.lastInsertRowid ?? 0),
+          changes: result.rowsAffected,
+        };
+      },
+    });
+    await tx.commit();
+    return out;
+  } finally {
+    // Rolls back if the work above threw or returned before committing.
+    tx.close();
+  }
+}
+
+export type Tx = {
+  all<R>(sql: string, ...args: unknown[]): Promise<R[]>;
+  get<R>(sql: string, ...args: unknown[]): Promise<R | undefined>;
+  run(sql: string, ...args: unknown[]): Promise<{ lastInsertRowid: number; changes: number }>;
 };
 
 /** What every module that touches storage is handed. */
@@ -111,16 +179,41 @@ async function migrate(): Promise<void> {
   await api.exec(`
     /* ---- accounts ----
        Every row that belongs to a person hangs off this table. An account is
-       created silently on first visit and identified only by the random token
-       in the session cookie, so there is no signup to get through. */
+       created silently on first visit, so there is no signup to get through.
+
+       claim_code is a one-time code that hands this account to whichever
+       browser presents it: the accounts migration prints one for a library that
+       predates accounts, and "link another device" mints one on request.
+       claim_expires_at is null for the first kind and a few minutes out for
+       the second — a code you asked for a moment ago should not still work
+       tomorrow, and one printed to a server log has no better moment to stop
+       working than when it is used.
+
+       email is reserved for a sign-in that sends a link rather than showing a
+       code, which needs a mail provider this app does not have. Nothing writes
+       it; a second device is reached with a code instead. */
     CREATE TABLE IF NOT EXISTS users (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      token_hash   TEXT UNIQUE,
-      claim_code   TEXT UNIQUE,
-      email        TEXT UNIQUE,
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      claim_code       TEXT UNIQUE,
+      claim_expires_at INTEGER,
+      email            TEXT UNIQUE,
+      created_at       INTEGER NOT NULL,
+      last_seen_at     INTEGER NOT NULL
+    );
+
+    /* The browsers signed in to an account, one row each.
+       An account used to hold its one token itself, which made "your library"
+       and "this browser" the same thing and left no way to read on a phone as
+       well as a laptop. A token is still the only credential and still stored
+       only as a hash; there can simply be more than one of them. */
+    CREATE TABLE IF NOT EXISTS sessions (
+      token_hash   TEXT PRIMARY KEY,
+      user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       created_at   INTEGER NOT NULL,
       last_seen_at INTEGER NOT NULL
     );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
     CREATE TABLE IF NOT EXISTS books (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -259,6 +352,50 @@ async function migrate(): Promise<void> {
       tokenize = 'unicode61 remove_diacritics 2'
     );
   `);
+
+  await adoptAccountColumns();
+}
+
+/** The columns a table actually has, which is the only way to ask SQLite
+ *  whether a migration has already been applied. */
+async function columnsOf(table: string): Promise<Set<string>> {
+  const rows = await api.all<{ name: string }>(`PRAGMA table_info(${table})`);
+  return new Set(rows.map((r) => r.name));
+}
+
+/**
+ * Bring a database written by the one-token-per-account version up to date.
+ *
+ * `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists, so
+ * the two changes to `users` — the expiry column, and moving the token out to
+ * `sessions` — have to be made by hand. Both are written to be safe to run
+ * again: several cold starts can arrive at once, and one of them losing the
+ * race must not take the process down with it.
+ */
+async function adoptAccountColumns(): Promise<void> {
+  const columns = await columnsOf("users");
+
+  if (!columns.has("claim_expires_at")) {
+    try {
+      await api.exec("ALTER TABLE users ADD COLUMN claim_expires_at INTEGER");
+    } catch (err) {
+      // Another process added it between the read and the write.
+      if (!/duplicate column/i.test(String(err))) throw err;
+    }
+  }
+
+  // The old column is emptied in the same transaction that copies it, so this
+  // finds nothing to do the second time and a token cannot come back from the
+  // dead after a device is unlinked.
+  if (columns.has("token_hash")) {
+    await api.batch([
+      {
+        sql: `INSERT OR IGNORE INTO sessions (token_hash, user_id, created_at, last_seen_at)
+              SELECT token_hash, id, created_at, last_seen_at FROM users WHERE token_hash IS NOT NULL`,
+      },
+      { sql: "UPDATE users SET token_hash = NULL WHERE token_hash IS NOT NULL" },
+    ]);
+  }
 }
 
 /**
@@ -280,14 +417,4 @@ export function dayKey(ts: number = Date.now()): string {
   const d = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-/**
- * A one-time code that hands an account to whoever opens it.
- *
- * Kept here because it is the only way into an account that no browser holds —
- * which is what an imported library is until its owner claims it.
- */
-export function mintClaimCode(): string {
-  return randomBytes(16).toString("hex");
 }

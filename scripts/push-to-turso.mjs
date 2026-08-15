@@ -46,6 +46,9 @@ const remote = createClient({ url, authToken, intMode: "number" });
  */
 const TABLES = [
   "users",
+  // Which browsers are signed in to which account. Without it a pushed library
+  // arrives with nobody able to open it.
+  "sessions",
   "books",
   "book_files",
   "chapters",
