@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BookSummary } from "@/lib/books";
 import { formatWords, readingTime, relativeTime } from "@/lib/format";
+import DeviceLink from "./DeviceLink";
 
 export default function Library() {
   const [books, setBooks] = useState<BookSummary[] | null>(null);
@@ -79,9 +80,9 @@ export default function Library() {
   );
 
   return (
-    <main className="mx-auto max-w-4xl px-5 py-12">
+    <main className="page">
       <section className="mb-10">
-        <h1 className="display text-[2.5rem] leading-[1.1]">Your library</h1>
+        <h1 className="display text-[2rem] leading-[1.1] sm:text-[2.5rem]">Your library</h1>
         <p className="mt-3 max-w-md text-sm leading-relaxed text-[var(--text-dim)]">
           Read in English, tap any word for an instant translation and explanation.
         </p>
@@ -109,12 +110,15 @@ export default function Library() {
         <span className="text-lg text-[var(--text-dim)]" aria-hidden>
           {uploading ? <span className="spin inline-block">◌</span> : "＋"}
         </span>
+        {/* Dropping is a thing you can only do with a mouse. The instruction
+            that assumes one is kept, but as the aside it is on a phone. */}
         <div className="min-w-0 flex-1">
           <p className="text-sm">
-            {uploading ? "Reading your book…" : "Drop an EPUB, PDF, TXT, or subtitle file here"}
+            {uploading ? "Reading your book…" : "Add an EPUB, PDF, TXT, or subtitle file"}
           </p>
           <p className="mt-0.5 text-xs text-[var(--text-dim)]">
-            Up to 60 MB. Files stay on this machine.
+            Up to 4 MB. Files are kept in your library, not shared.
+            <span className="hidden sm:inline"> Or drag one onto this box.</span>
           </p>
         </div>
         <button className="btn" onClick={() => inputRef.current?.click()} disabled={uploading}>
@@ -184,8 +188,8 @@ export default function Library() {
                 ? Math.round(((b.chapter_idx + b.scroll_pct) / b.chapter_count) * 100)
                 : 0;
               return (
-                <li key={b.id} className="row group relative">
-                  <Link href={`/read/${b.id}`} className="flex gap-5 px-2 py-5">
+                <li key={b.id} className="row relative">
+                  <Link href={`/read/${b.id}`} className="flex gap-4 px-2 py-4 sm:gap-5 sm:py-5">
                     <div className="h-[92px] w-[62px] shrink-0 overflow-hidden rounded-[3px] bg-[var(--bg-hover)] shadow-[0_2px_10px_-4px_rgb(60_44_22/0.4)]">
                       {b.cover_url ? (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -216,21 +220,13 @@ export default function Library() {
                           .filter(Boolean)
                           .join(" · ")}
 
-                        {/* How readable this book is for you right now. Above ~95%
-                            a book reads smoothly; below ~90% it is a slog. */}
-                        {b.coverage != null && (
+                        {/* What you took out of this book: the words you looked
+                            up and kept. */}
+                        {b.saved_words > 0 && (
                           <>
                             {" · "}
-                            <span
-                              className={
-                                b.coverage >= 95
-                                  ? "text-[var(--good)]"
-                                  : b.coverage >= 88
-                                    ? "text-[var(--text-dim)]"
-                                    : "text-[var(--danger)]"
-                              }
-                            >
-                              {b.coverage}% known
+                            <span className="text-[var(--accent)]">
+                              {b.saved_words.toLocaleString()} saved
                             </span>
                           </>
                         )}
@@ -252,17 +248,21 @@ export default function Library() {
                     </div>
                   </Link>
 
-                  <div className="absolute right-2 top-5 flex gap-3 text-[11px] opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                  {/* On a desk these wait in the top corner until the row is
+                      pointed at. A phone can neither hover nor spare the corner
+                      — the title is already using it — so there they stand in
+                      the flow underneath, in plain sight. */}
+                  <div className="hover-reveal flex justify-end gap-5 px-2 pb-4 text-xs sm:absolute sm:top-5 sm:right-2 sm:gap-3 sm:pb-0 sm:text-[11px]">
                     <a
                       href={`/api/books/${b.id}/download`}
-                      className="text-[var(--text-dim)] underline underline-offset-4 hover:text-[var(--text)]"
+                      className="py-1 text-[var(--text-dim)] underline underline-offset-4 hover:text-[var(--text)]"
                       title="Download the original file"
                     >
                       Download
                     </a>
                     <button
                       onClick={() => void remove(b)}
-                      className="text-[var(--text-dim)] underline underline-offset-4 hover:text-[var(--danger)]"
+                      className="py-1 text-[var(--text-dim)] underline underline-offset-4 hover:text-[var(--danger)]"
                       title="Remove from library"
                     >
                       Remove
@@ -274,6 +274,8 @@ export default function Library() {
           </ul>
         </section>
       )}
+
+      <DeviceLink />
     </main>
   );
 }

@@ -64,13 +64,13 @@ export default function Stats() {
     : null;
 
   return (
-    <main className="mx-auto max-w-4xl px-5 py-12">
-      <h1 className="display text-[2.5rem] leading-[1.1]">Progress</h1>
+    <main className="page">
+      <h1 className="display text-[2rem] leading-[1.1] sm:text-[2.5rem]">Progress</h1>
       <p className="mt-3 max-w-md text-sm leading-relaxed text-[var(--text-dim)]">
         Time with a book actually open, and what came out of it.
       </p>
 
-      <div className="sheet mt-10 grid grid-cols-2 gap-x-8 gap-y-7 lg:grid-cols-4">
+      <div className="sheet mt-10 grid grid-cols-2 gap-x-5 gap-y-7 sm:gap-x-8 lg:grid-cols-4">
         <Tile
           value={`${stats.streak}`}
           unit={stats.streak === 1 ? "day" : "days"}
@@ -89,7 +89,7 @@ export default function Stats() {
 
       <Heatmap days={stats.days} />
 
-      <div className="sheet mt-10 grid grid-cols-2 gap-x-8 gap-y-7 lg:grid-cols-4">
+      <div className="sheet mt-10 grid grid-cols-2 gap-x-5 gap-y-7 sm:gap-x-8 lg:grid-cols-4">
         <Tile value={stats.vocabTotal.toLocaleString()} label="Words saved" />
         <Tile value={stats.dueTotal.toLocaleString()} label="Cards due now" />
         <Tile value={stats.reviewedTotal.toLocaleString()} label="Reviews done" />
@@ -109,10 +109,10 @@ export default function Stats() {
           </span>
         </div>
         <p className="mt-3 max-w-2xl text-sm leading-relaxed text-[var(--text-dim)]">
-          Known words are faded in the reader and counted towards the “% known words” on each book,
-          which is the quickest way to tell whether a book is the right level for you. Mark them as
-          you read with <span className="text-[var(--text)]">I know it</span>, or start from the
-          common-word list below — nothing here is permanent.
+          Known words are faded in the reader and kept out of your study list, so what stands out on
+          the page is what you have yet to learn. Mark them as you read with{" "}
+          <span className="text-[var(--text)]">I know it</span>, or start from the common-word list
+          below — nothing here is permanent.
         </p>
 
         <div className="mt-5 flex flex-wrap items-center gap-2">
@@ -158,10 +158,12 @@ function Tile({
 }) {
   // No box: the number is the tile. A label above it in small caps and a rule
   // to its left are enough to keep four of them from running together.
+  // Two of these to a phone screen is a narrow column, and not every value is a
+  // number — "under a minute" has to be allowed to take a second line.
   return (
-    <div className="border-l border-[var(--border)] pl-4">
+    <div className="border-l border-[var(--border)] pl-3 sm:pl-4">
       <p className="eyebrow">{label}</p>
-      <p className="display mt-1.5 text-[2rem] leading-none">
+      <p className="display mt-1.5 text-[1.75rem] leading-tight sm:text-[2rem] sm:leading-none">
         {value}
         {unit && (
           <span className="ml-1.5 font-sans text-xs text-[var(--text-dim)]">{unit}</span>

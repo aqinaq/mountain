@@ -292,29 +292,6 @@ export async function bookCoverage(userId: number, bookId: number): Promise<Cove
   };
 }
 
-/** Coverage for every indexed book at once, for the library shelf. */
-export async function coverageByBook(userId: number): Promise<Map<number, number>> {
-  const db = await getDb();
-  const rows = await db.all<{ book_id: number; tokens: number; known: number }>(
-    `SELECT bi.book_id,
-              bi.tokens,
-              COALESCE((SELECT SUM(bw.count)
-                          FROM book_words bw
-                          JOIN known_words k ON k.lemma = bw.lemma AND k.user_id = b.user_id
-                         WHERE bw.book_id = bi.book_id), 0) AS known
-         FROM book_index bi
-         JOIN books b ON b.id = bi.book_id
-        WHERE b.user_id = ?`,
-    userId,
-  );
-
-  const out = new Map<number, number>();
-  for (const r of rows) {
-    out.set(r.book_id, r.tokens ? Math.round((r.known / r.tokens) * 1000) / 10 : 0);
-  }
-  return out;
-}
-
 export type UnknownWord = { lemma: string; count: number; saved: number };
 
 /**

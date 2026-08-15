@@ -3,7 +3,8 @@ import { getDb, plain, plainAll } from "./db";
 import { isGutenbergUrl, type CatalogBook } from "./gutendex";
 import { countWords, parseEpub, parseSubtitles, parseText, type ParsedBook } from "./ingest";
 import { parsePdf } from "./pdf-layout";
-import { coverageByBook, indexBook, indexPending } from "./words";
+import { safeFetch } from "./safe-fetch";
+import { indexBook, indexPending } from "./words";
 
 export type BookRow = {
   id: number;
@@ -24,20 +25,21 @@ export type BookSummary = BookRow & {
   chapter_idx: number;
   scroll_pct: number;
   updated_at: number | null;
-  /** Share of the book's words you already know, or null before it is indexed. */
-  coverage?: number | null;
+  /** How many words you looked up and kept while reading this book. */
+  saved_words: number;
 };
 
 export async function listBooks(userId: number): Promise<BookSummary[]> {
   // Books imported before word counting existed, or indexed under older
-  // lemmatiser rules, catch up here so the shelf can show coverage.
+  // lemmatiser rules, catch up here so the reader knows which words are new.
   await indexPending(userId);
 
   const db = await getDb();
-  const books = plainAll(
+  return plainAll(
     await db.all<BookSummary>(
       `SELECT b.*,
               (SELECT COUNT(*) FROM chapters c WHERE c.book_id = b.id) AS chapter_count,
+              (SELECT COUNT(*) FROM vocab v WHERE v.book_id = b.id)    AS saved_words,
               COALESCE(p.chapter_idx, 0)  AS chapter_idx,
               COALESCE(p.scroll_pct, 0)   AS scroll_pct,
               p.updated_at                AS updated_at
@@ -48,9 +50,6 @@ export async function listBooks(userId: number): Promise<BookSummary[]> {
       userId,
     ),
   );
-
-  const coverage = await coverageByBook(userId);
-  return books.map((b) => ({ ...b, coverage: coverage.get(b.id) ?? null }));
 }
 
 /** Null for a book that is not this reader's — callers turn that into a 404,
@@ -61,6 +60,7 @@ export async function getBook(userId: number, id: number): Promise<BookSummary |
     (await db.get<BookSummary>(
       `SELECT b.*,
                 (SELECT COUNT(*) FROM chapters c WHERE c.book_id = b.id) AS chapter_count,
+                (SELECT COUNT(*) FROM vocab v WHERE v.book_id = b.id)    AS saved_words,
                 COALESCE(p.chapter_idx, 0) AS chapter_idx,
                 COALESCE(p.scroll_pct, 0)  AS scroll_pct,
                 p.updated_at               AS updated_at
@@ -271,13 +271,24 @@ export async function importFromUrl(userId: number, url: string): Promise<number
 
 /* ---------------------- Project Gutenberg (public domain) ---------------------- */
 
+/**
+ * A book is bigger than an article but not unbounded; the cap is here so a
+ * mirror serving something unexpected cannot be read into memory whole.
+ */
+const MAX_DOWNLOAD_BYTES = 40 * 1024 * 1024;
+
+/**
+ * Gutenberg download addresses are checked against its own hostnames before we
+ * get here, but they redirect out to mirrors — so where the bytes finally come
+ * from is not something the host check settles, and `safeFetch` re-checks each
+ * hop against the private ranges the way it does for any other address.
+ */
 async function download(url: string): Promise<Buffer> {
-  const res = await fetch(url, {
-    cache: "no-store",
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; MountainReader/1.0)" },
-  });
-  if (!res.ok) throw new Error(`Download failed (HTTP ${res.status}).`);
-  return Buffer.from(await res.arrayBuffer());
+  const res = await safeFetch(url, { maxBytes: MAX_DOWNLOAD_BYTES, timeoutMs: 60_000 });
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`Download failed (HTTP ${res.status}).`);
+  }
+  return res.body;
 }
 
 /**
