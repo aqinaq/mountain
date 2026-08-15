@@ -22,12 +22,33 @@ npm start
 No API keys and no signup. Everything is stored on the server in `data/`
 (`reader.db` plus the original book files), which is gitignored.
 
+```bash
+npm test
+```
+
+Node's own test runner, no test framework and no new dependencies — the source
+is TypeScript that Node strips types from directly. The tests cover the parts
+that fail silently rather than loudly: what the article extractor does with
+malformed markup, what `safe-fetch.ts` refuses, and what happens to accounts
+when two requests race or a claim is redeemed twice. Those last ones run
+against a real SQLite file in a temporary directory, because what is being
+tested is what the database does — a primary key settling a race, a transaction
+refusing to spend a code twice, a migration reshaping a table that already has
+rows in it. `src/lib/db-migration.test.ts` opens a database written by the
+previous schema and checks that nobody is signed out by the upgrade.
+
 Each browser gets its own library. On first visit a random token goes into a
 cookie and an account is opened behind it — nothing to fill in, and every book,
-saved word and streak belongs to that account from then on. Clearing the cookie
-means starting over, so treat it the way you would a password: the `users.email`
-column is where a claimed account would attach itself to a person, but nothing
-fills it in yet.
+saved word and streak belongs to that account from then on.
+
+**Reading on a second device.** At the bottom of the library page, *Show a
+code* prints something like `4GPK-M44S-YMTF`. Type it into the same place on
+the other device, under *Already have a code?*, and that device is signed in to
+the same account: both stay signed in, and anything the second device had
+already saved is folded in rather than left behind. The code lasts ten minutes,
+works once, and asking for a new one cancels the old. There is still no
+password to lose — but clearing the cookie on every device you own does mean
+starting over.
 
 Upgrading a database from before accounts existed: the migration runs
 automatically at startup, parks the whole existing library in an account nobody
@@ -37,17 +58,24 @@ holds yet, and prints a one-time claim link to the server log:
 /claim?code=7342bce6…
 ```
 
-Open that once in the browser you read in and the library is yours. The code is
-spent on use and is not stored anywhere else, so nothing can inherit your books
-by simply being the first request to arrive — which is what a health check or a
-crawler would otherwise do.
+Open that once in the browser you read in and the library is yours. That code
+never expires, because there is no moment at which a line in a log file can be
+assumed to have been read; every other code does. Both are spent on use and
+stored nowhere else, so nothing can inherit your books by simply being the
+first request to arrive — which is what a health check or a crawler would
+otherwise do.
+
+Upgrading from a deployment that predates second devices needs nothing: the
+token each browser is holding is moved into the new `sessions` table on the
+first request after the deploy, and nobody is signed out.
 
 ## What it does
 
 **Getting books in**
 - Drag an **EPUB, PDF, TXT, or subtitle file (SRT/VTT)** onto the library page
-  (60 MB limit). Subtitles are re-flowed from screen-sized cues back into
-  paragraphs, so a transcript reads like prose.
+  (4 MB limit — the platform refuses a larger request body before the app sees
+  it, so the app refuses it first and says why). Subtitles are re-flowed from
+  screen-sized cues back into paragraphs, so a transcript reads like prose.
 - Paste **a link to any article** and the readable text is pulled out of the
   page and stored like any other book.
 - Or open **Browse** and pull public-domain titles straight from Project
@@ -124,6 +152,9 @@ database server to run.
 | Path | Role |
 | --- | --- |
 | `src/lib/db.ts` | Schema and migrations, run once on first import |
+| `src/lib/accounts.ts` | Accounts, sessions, link codes — no request state |
+| `src/lib/session.ts` | Reads the session cookie and hands it to `accounts.ts` |
+| `src/lib/safe-fetch.ts` | Fetching an address the reader chose, without reaching the private network |
 | `src/lib/ingest.ts` | EPUB (JSZip + OPF spine), PDF (pdfjs), TXT and SRT/VTT → chapters |
 | `src/lib/article.ts` | Pulls the readable article out of a web page |
 | `src/lib/books.ts` | Library queries, saving, Gutenberg search and import |
@@ -163,6 +194,34 @@ tapping and text selection reliable — the reader owns the DOM. Incoming markup
 is run through `sanitize-html` with a structural-tags-only allowlist, so no
 scripts, styles, classes, or remote resources survive.
 
+### Fetching an address the reader typed
+
+Importing an article means the server makes a request to wherever it is told,
+from inside the deployment — where the cloud metadata endpoint hands out
+credentials to anything that asks and every internal service is reachable. So
+`safe-fetch.ts` is used for that instead of `fetch`:
+
+1. The hostname is resolved and **every** address it answers with is checked
+   against the private, loopback, link-local, carrier-NAT and reserved ranges.
+   All of them, because a name that answers with one public address and one
+   loopback address is a name built to get past a check that reads the first
+   entry only.
+2. Each redirect is put through the same check, rather than followed. A public
+   URL is free to redirect to `http://127.0.0.1:6379`.
+3. The request is then made **to the address that was checked**, with a `lookup`
+   that returns it and nothing else. Resolving a name, approving it and handing
+   the name back to the network stack lets a one-second DNS record answer
+   differently the second time; the socket goes where the check went.
+
+That third step is why it is built on `node:https` rather than `fetch`, which
+resolves names itself and cannot be told where to connect. Byte caps, the
+timeout and the redirect limit come along with it — an article is at most a few
+megabytes and a book at most forty.
+
+Gutenberg downloads go through it too. Their addresses are checked against
+Gutenberg's own hostnames first, but they redirect out to mirrors, and where
+the bytes finally come from is not something a hostname check settles.
+
 ### Translation providers
 
 `src/lib/translate.ts` tries providers in order and takes the first that
@@ -188,13 +247,16 @@ wired up.
 
 ## Limits
 
-- **Anonymous accounts, no login.** Every row is scoped to an account, but the
-  cookie is the only credential and there is no way to get back into an account
-  from a second device or a cleared browser. Real sign-in — a magic link
-  writing to `users.email` — is the missing piece.
-- **No upload quotas.** Anyone who can reach the server can spend its disk, 60
-  MB at a time, and its translation-provider calls. A public deployment needs a
-  rate limit in front of `/api/upload` and `/api/translate`.
+- **Anonymous accounts, no login.** A cookie is the only credential. A second
+  device can be added with a link code, but there is no way back into an
+  account once every browser holding it has been cleared — nothing knows who
+  you are, so nothing can be sent to you. Sign-in by emailed link is the piece
+  that would fix that, and it needs a mail provider; `users.email` is the
+  column it would write to, and until then nothing fills it in.
+- **No upload quotas.** Anyone who can reach the server can spend its storage,
+  4 MB at a time, and its translation-provider calls. A public deployment needs
+  a rate limit in front of `/api/upload`, `/api/import/url` and
+  `/api/translate`.
 - **A book is stored per account.** Ten readers importing the same title means
   ten copies of the text. Fine for a handful of people, wasteful beyond that;
   de-duplicating means content-addressed books plus a library join table.
