@@ -12,6 +12,10 @@ npm install
 npm run dev      # http://localhost:3000
 ```
 
+Node 24 is required. On first run, the app creates the gitignored `data/`
+directory and its local SQLite database automatically. No database setup or
+API key is needed for local use.
+
 For a production run:
 
 ```bash
@@ -19,8 +23,14 @@ npm run build
 npm start
 ```
 
-No API keys and no signup. Everything is stored on the server in `data/`
-(`reader.db` plus the original book files), which is gitignored.
+The production build uses Next.js's supported Webpack option. This also works
+in environments where Turbopack's CSS worker cannot open a local port.
+
+There is no signup. Locally, books, vocabulary, sessions, translation cache,
+and uploaded file bytes live in `data/reader.db`. In deployment, set
+`TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` to use a Turso/libSQL database;
+the app does not rely on persistent server disk. The health route returns 503
+when the database or a required module is unavailable.
 
 ```bash
 npm test
@@ -72,6 +82,9 @@ first request after the deploy, and nobody is signed out.
 ## What it does
 
 **Getting books in**
+- On an empty library, choose **Read the sample** to open a short original
+  two-chapter story immediately. It stays in your own library and needs no
+  catalog request.
 - Drag an **EPUB, PDF, TXT, or subtitle file (SRT/VTT)** onto the library page
   (4 MB limit — the platform refuses a larger request body before the app sees
   it, so the app refuses it first and says why). Subtitles are re-flowed from
@@ -129,10 +142,10 @@ first request after the deploy, and nobody is signed out.
   words read, review accuracy, and a twelve-week activity calendar.
 
 **Appearance**
-- The app follows your system light/dark setting. The `◐` button in the nav
-  cycles system → light → dark and pins your choice; an inline script in the
-  layout applies it during HTML parsing, so a pinned theme never flashes the
-  wrong one on load.
+- The app starts in light mode. The `◐` button in the nav cycles
+  light → dark → system and pins your choice; an inline script in the layout
+  applies it during HTML parsing, so a pinned theme never flashes the wrong
+  one on load.
 - The reader's paper (light / sepia / dark) is chosen separately in its own
   settings — what reads well behind a page of prose is not what reads well
   behind a library.
@@ -145,9 +158,11 @@ first request after the deploy, and nobody is signed out.
 
 ## How it is put together
 
-Next.js 16 (App Router) + TypeScript + Tailwind v4, with SQLite through Node's
-built-in `node:sqlite` — so there is no native module to compile and no
-database server to run.
+Next.js 16 (App Router) + TypeScript + Tailwind v4, with SQLite through
+`@libsql/client`. It opens a local file in development and uses Turso/libSQL
+over the network when `TURSO_DATABASE_URL` is set. The same schema and queries
+serve both, including the FTS5 search index. Uploaded file bytes are stored in
+the `book_files` table alongside their parsed chapters.
 
 | Path | Role |
 | --- | --- |
@@ -158,6 +173,7 @@ database server to run.
 | `src/lib/ingest.ts` | EPUB (JSZip + OPF spine), PDF (pdfjs), TXT and SRT/VTT → chapters |
 | `src/lib/article.ts` | Pulls the readable article out of a web page |
 | `src/lib/books.ts` | Library queries, saving, Gutenberg search and import |
+| `src/lib/demo-book.ts` | Bundled first-visit reading sample |
 | `src/lib/lemma.ts` | Rule-based English lemmatiser — runs on both server and client |
 | `src/lib/words.ts` | Word index, book coverage, known words, full-text search |
 | `src/lib/srs.ts` | Card generation and the Leitner schedule |
@@ -278,3 +294,8 @@ wired up.
   fires — where they are missing the paragraph is highlighted instead.
 - Only add books you have the right to use — your own files, or public-domain
   works from the Gutenberg catalog.
+
+## Portfolio walkthrough
+
+See [PORTFOLIO.md](PORTFOLIO.md) for a short case study and a 30-second demo
+script showing the reader, word lookup, and review cards.

@@ -10,6 +10,7 @@ export default function Catalog() {
   const [query, setQuery] = useState("");
   const [input, setInput] = useState("");
   const [page, setPage] = useState(1);
+  const [retry, setRetry] = useState(0);
   const [books, setBooks] = useState<CatalogBook[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -41,7 +42,7 @@ export default function Catalog() {
     };
   }, []);
 
-  // Fetching on [query, page] change is exactly what an effect is for: the
+  // Fetching on [query, page, retry] change is exactly what an effect is for: the
   // spinner has to go up before the request, so this setState is intentional.
   useEffect(() => {
     const id = ++reqId.current;
@@ -64,7 +65,7 @@ export default function Catalog() {
       .finally(() => {
         if (id === reqId.current) setLoading(false);
       });
-  }, [query, page]);
+  }, [query, page, retry]);
 
   const search = useCallback((q: string) => {
     setQuery(q);
@@ -132,7 +133,7 @@ export default function Catalog() {
         ))}
       </div>
 
-      {error && (
+      {error && !loading && (
         <p className="mt-6 border-l-2 border-[var(--danger)] py-1 pl-3 text-sm text-[var(--danger)]">
           {error}
         </p>
@@ -140,6 +141,13 @@ export default function Catalog() {
 
       {loading ? (
         <p className="py-16 text-sm text-[var(--text-dim)]">Searching…</p>
+      ) : error && books.length === 0 ? (
+        <div className="py-10">
+          <button className="btn" onClick={() => setRetry((n) => n + 1)}>Try again</button>
+          <p className="mt-4 text-sm text-[var(--text-dim)]">
+            You can also <Link href="/" className="text-[var(--accent)] underline underline-offset-4">read the sample</Link> from your library.
+          </p>
+        </div>
       ) : books.length === 0 ? (
         <p className="py-16 text-sm text-[var(--text-dim)]">No books matched that search.</p>
       ) : (

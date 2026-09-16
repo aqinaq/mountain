@@ -1,4 +1,5 @@
 import { createClient, type Client, type InArgs, type Row } from "@libsql/client";
+import { mkdirSync } from "node:fs";
 
 /**
  * The database, which is SQLite either way.
@@ -22,6 +23,9 @@ let client: Client | undefined;
 
 function connection(): Client {
   if (!client) {
+    // A fresh checkout has no gitignored data directory. libSQL creates the
+    // database file, but not its parent directory.
+    if (!process.env.TURSO_DATABASE_URL) mkdirSync("./data", { recursive: true });
     client = createClient({
       url,
       authToken,
@@ -170,7 +174,12 @@ let ready: Promise<void> | undefined;
  * races between cold starts settle harmlessly.
  */
 export async function getDb(): Promise<typeof api> {
-  if (!ready) ready = migrate();
+  if (!ready) {
+    ready = migrate().catch((error) => {
+      ready = undefined;
+      throw error;
+    });
+  }
   await ready;
   return api;
 }

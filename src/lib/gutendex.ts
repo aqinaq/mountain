@@ -64,7 +64,15 @@ export async function searchCatalog(
   if (query.trim()) url.searchParams.set("search", query.trim());
   else url.searchParams.set("sort", "popular");
 
-  const res = await fetch(url, { cache: "no-store" });
+  let res: Response;
+  try {
+    res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(12000) });
+  } catch (err) {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      throw new Error("The Gutenberg catalog did not respond. Please try again.");
+    }
+    throw new Error("The Gutenberg catalog could not be reached. Please try again.");
+  }
   if (!res.ok) throw new Error(`Gutenberg catalog is unavailable (HTTP ${res.status}).`);
   const data = (await res.json()) as { results?: GutendexBook[]; next?: string | null };
 

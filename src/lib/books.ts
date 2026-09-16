@@ -152,7 +152,7 @@ export async function deleteBook(userId: number, id: number) {
 type SaveInput = {
   userId: number;
   parsed: ParsedBook;
-  source: "upload" | "gutenberg" | "web";
+  source: "upload" | "gutenberg" | "web" | "demo";
   sourceId?: string;
   coverUrl?: string;
   original?: { buffer: Buffer; ext: string };

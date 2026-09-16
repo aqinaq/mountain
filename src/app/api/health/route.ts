@@ -13,17 +13,6 @@ export const dynamic = "force-dynamic";
  * is the only way to find out which one is at fault.
  */
 export async function GET() {
-  const url = process.env.TURSO_DATABASE_URL;
-  const token = process.env.TURSO_AUTH_TOKEN;
-
-  const env = {
-    TURSO_DATABASE_URL: url ? { set: true, value: url } : { set: false },
-    TURSO_AUTH_TOKEN: token ? { set: true, length: token.length } : { set: false },
-    MOUNTAIN_PASSWORD: { set: Boolean(process.env.MOUNTAIN_PASSWORD) },
-    VERCEL_REGION: process.env.VERCEL_REGION ?? null,
-    node: process.version,
-  };
-
   // Third-party first, then this project's modules in dependency order, so the
   // first failure names the deepest thing that is actually broken.
   const suspects: [string, () => Promise<unknown>][] = [
@@ -57,14 +46,15 @@ export async function GET() {
     }
   }
 
-  let database: unknown;
+  let database: { ok: boolean; books?: number; error?: string };
   try {
     const { getDb } = await import("@/lib/db");
     const db = await getDb();
     const row = await db.get<{ n: number }>("SELECT COUNT(*) AS n FROM books");
     database = { ok: true, books: row?.n ?? 0 };
   } catch (err) {
-    database = { ok: false, error: describe(err) };
+    console.error("Health check database failure:", err);
+    database = { ok: false, error: "Database unavailable." };
   }
 
   // Which of the outside world this deployment is allowed to talk to. A
@@ -87,8 +77,8 @@ export async function GET() {
     }
   }
 
-  const ok = Object.values(imports).every((v) => v === "ok");
-  return NextResponse.json({ ok, env, imports, database, outbound }, { status: ok ? 200 : 503 });
+  const ok = database.ok && Object.values(imports).every((v) => v === "ok");
+  return NextResponse.json({ ok, imports, database, outbound }, { status: ok ? 200 : 503 });
 }
 
 /** Errors from a failed import carry the useful part in `cause`, not the message. */

@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/test-hooks.mjs --test 'src/**/*.test.ts'"
@@ -17,11 +17,11 @@
     "fast-xml-parser": "^5.10.1",
     "htmlparser2": "^12.0.0",
     "jszip": "^3.10.1",
-    "next": "16.3.0",
+    "next": "16.3.5",
     "pdfjs-dist": "^6.2.108",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "sanitize-html": "^2.17.6"
+    "sanitize-html": "2.17.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -30,7 +30,7 @@
     "@types/react-dom": "^19",
     "@types/sanitize-html": "^2.16.1",
     "eslint": "^9",
-    "eslint-config-next": "16.3.0",
+    "eslint-config-next": "16.3.5",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

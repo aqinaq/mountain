@@ -1,18 +1,21 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BookSummary } from "@/lib/books";
 import { formatWords, readingTime, relativeTime } from "@/lib/format";
 import DeviceLink from "./DeviceLink";
 
 export default function Library() {
+  const router = useRouter();
   const [books, setBooks] = useState<BookSummary[] | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
   const [url, setUrl] = useState("");
   const [importing, setImporting] = useState(false);
+  const [demoing, setDemoing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -69,6 +72,20 @@ export default function Library() {
       setImporting(false);
     }
   }, [load, url]);
+
+  const openDemo = useCallback(async () => {
+    setDemoing(true);
+    setError("");
+    try {
+      const res = await fetch("/api/demo", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "The sample could not be opened.");
+      router.push(`/read/${Number(data.id)}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "The sample could not be opened.");
+      setDemoing(false);
+    }
+  }, [router]);
 
   const remove = useCallback(
     async (book: BookSummary) => {
@@ -169,13 +186,20 @@ export default function Library() {
         <p className="py-12 text-sm text-[var(--text-dim)]">Loading…</p>
       ) : books.length === 0 ? (
         <div className="sheet">
-          <p className="text-sm text-[var(--text-dim)]">
-            Nothing here yet. Upload a file above, or{" "}
-            <Link href="/catalog" className="text-[var(--accent)] underline underline-offset-4">
-              browse free public-domain books
-            </Link>
-            .
+          <p className="eyebrow mb-3">Start reading</p>
+          <h2 className="display text-[1.5rem]">Try a short story</h2>
+          <p className="mt-2 max-w-lg text-sm leading-relaxed text-[var(--text-dim)]">
+            Open a two-chapter sample, tap a word, and save it for review. It is added only to your
+            own library.
           </p>
+          <div className="mt-5 flex flex-wrap items-center gap-4">
+            <button className="btn" onClick={() => void openDemo()} disabled={demoing}>
+              {demoing ? "Opening…" : "Read the sample"}
+            </button>
+            <Link href="/catalog" className="text-sm text-[var(--accent)] underline underline-offset-4">
+              Browse public-domain books
+            </Link>
+          </div>
         </div>
       ) : (
         <section className="sheet">
