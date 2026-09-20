@@ -106,16 +106,7 @@ export default function Library() {
       </section>
 
       {/* upload */}
-      <label
-        htmlFor="book-file-input"
-        role="button"
-        tabIndex={uploading ? -1 : 0}
-        aria-disabled={uploading}
-        onKeyDown={(e) => {
-          if (uploading || (e.key !== "Enter" && e.key !== " ")) return;
-          e.preventDefault();
-          inputRef.current?.click();
-        }}
+      <div
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -127,12 +118,25 @@ export default function Library() {
           const file = e.dataTransfer.files?.[0];
           if (file) void upload(file);
         }}
-        className={`mb-5 flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-3 rounded-md border border-dashed px-5 py-5 transition-colors outline-none focus-visible:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[color-mix(in_srgb,var(--accent)_25%,transparent)] ${
+        className={`relative mb-5 flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-3 overflow-hidden rounded-md border border-dashed px-5 py-5 transition-colors focus-within:border-[var(--accent)] focus-within:ring-2 focus-within:ring-[color-mix(in_srgb,var(--accent)_25%,transparent)] ${
           dragging
             ? "border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_7%,transparent)]"
             : "border-[var(--border-strong)]"
         }`}
       >
+        <input
+          id="book-file-input"
+          ref={inputRef}
+          type="file"
+          accept=".epub,.pdf,.txt,.md,.srt,.vtt"
+          disabled={uploading}
+          aria-label="Choose a book file"
+          className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0 disabled:cursor-wait"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void upload(file);
+          }}
+        />
         <span className="text-lg text-[var(--text-dim)]" aria-hidden>
           {uploading ? <span className="spin inline-block">◌</span> : "＋"}
         </span>
@@ -150,19 +154,7 @@ export default function Library() {
         <span className="btn" aria-hidden="true">
           Choose a file
         </span>
-        <input
-          id="book-file-input"
-          ref={inputRef}
-          type="file"
-          accept=".epub,.pdf,.txt,.md,.srt,.vtt"
-          disabled={uploading}
-          hidden
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) void upload(file);
-          }}
-        />
-      </label>
+      </div>
 
       {/* Anything readable on the web is fair game too — the article is pulled
           out of the page and stored like any other book. */}
