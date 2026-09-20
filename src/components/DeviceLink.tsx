@@ -18,6 +18,7 @@ export default function DeviceLink() {
   const [entered, setEntered] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
   const [outcome, setOutcome] = useState<"ok" | "failed" | "">("");
 
   // The claim itself happens in /claim, which redirects back here with the
@@ -66,6 +67,7 @@ export default function DeviceLink() {
   const request = useCallback(async () => {
     setBusy(true);
     setError("");
+    setCopied(false);
     try {
       const res = await fetch("/api/link", { method: "POST" });
       const data = await res.json();
@@ -78,6 +80,17 @@ export default function DeviceLink() {
       setBusy(false);
     }
   }, []);
+
+  const copyCode = useCallback(async () => {
+    if (!code) return;
+    setError("");
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+    } catch {
+      setError("Could not copy the code. Select it and copy it manually.");
+    }
+  }, [code]);
 
   const expired = Boolean(code) && left <= 0;
   const minutes = Math.floor(left / 60000);
@@ -101,14 +114,24 @@ export default function DeviceLink() {
       <div className="grid gap-6 sm:grid-cols-2">
         {/* This device hands out a code… */}
         <div>
-          <p className="text-sm">Read this library on your phone</p>
+          <p className="text-sm">Read this library on another device</p>
           <p className="mt-0.5 text-xs text-[var(--text-dim)]">
             Show a code here, type it there. It lasts ten minutes and works once.
           </p>
 
           {code && !expired ? (
             <div className="mt-3">
-              <p className="font-mono text-lg tracking-[0.15em] select-all">{code}</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="font-mono text-lg tracking-[0.15em] select-all">{code}</p>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => void copyCode()}
+                  aria-live="polite"
+                >
+                  {copied ? "Copied" : "Copy"}
+                </button>
+              </div>
               <p className="mt-1 text-xs text-[var(--text-dim)]">
                 {minutes}:{String(seconds).padStart(2, "0")} left · enter it under “Already have a
                 code?” on the other device
