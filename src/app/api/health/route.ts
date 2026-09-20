@@ -62,7 +62,7 @@ export async function GET() {
   // that is not something the code can be inspected for.
   const outbound: Record<string, string> = {};
   for (const [name, target] of [
-    ["gutendex", "https://gutendex.com/books?search=test"],
+    ["catalog", "https://www.gutenberg.org/ebooks/search.opds/?query=test"],
     ["gutenberg", "https://www.gutenberg.org/cache/epub/84/pg84.txt"],
     ["translate", "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=kk&dt=t&q=test"],
   ] as const) {

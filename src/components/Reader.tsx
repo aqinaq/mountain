@@ -74,6 +74,7 @@ export default function Reader({
   const contentRef = useRef<HTMLDivElement>(null);
   const activeSpan = useRef<HTMLElement | null>(null);
   const translateReq = useRef(0);
+  const translateAbort = useRef<AbortController | null>(null);
   const restoreTo = useRef<number | null>(book.scroll_pct || null);
   // A section to land on once the chapter it lives in has finished loading.
   const pendingSection = useRef<number | null>(null);
@@ -81,6 +82,8 @@ export default function Reader({
   const pendingFind = useRef<string | null>(null);
 
   const readAlong = useReadAlong(contentRef, scrollerRef, idx);
+
+  useEffect(() => () => translateAbort.current?.abort(), []);
 
   /* ---------------- settings persistence ---------------- */
 
@@ -446,6 +449,9 @@ export default function Reader({
 
   const runTranslate = useCallback(
     async (text: string, sentence: string, rect: DOMRect) => {
+      translateAbort.current?.abort();
+      const abort = new AbortController();
+      translateAbort.current = abort;
       const id = ++translateReq.current;
       setTerm(text);
       setContext(sentence);
@@ -464,6 +470,7 @@ export default function Reader({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text, target: settings.target, bookId: book.id }),
+          signal: abort.signal,
         });
         const data = await res.json();
         if (id !== translateReq.current) return; // superseded by a newer tap
@@ -471,6 +478,7 @@ export default function Reader({
         setResult(data as TranslateResult);
       } catch (err) {
         if (id !== translateReq.current) return;
+        if (err instanceof Error && err.name === "AbortError") return;
         setPopupError(err instanceof Error ? err.message : "Translation failed.");
       } finally {
         if (id === translateReq.current) setPopupLoading(false);

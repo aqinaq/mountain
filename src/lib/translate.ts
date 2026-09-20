@@ -124,18 +124,20 @@ async function machineTranslate(
   text: string,
   target: string,
 ): Promise<{ translation: string; provider: string } | null> {
-  for (const p of PROVIDERS) {
-    try {
-      const translation = await p.translate(text, target);
-      if (translation && translation.toLowerCase() !== text.toLowerCase()) {
+  // These public services have very different latency and rate-limit profiles.
+  // Start both together so a throttled primary does not add its full delay
+  // before the fallback even begins.
+  try {
+    return await Promise.any(
+      PROVIDERS.map(async (p) => {
+        const translation = await p.translate(text, target);
+        if (!translation) throw new Error(`${p.name} returned no translation`);
         return { translation, provider: p.name };
-      }
-      if (translation) return { translation, provider: p.name };
-    } catch {
-      // try the next provider
-    }
+      }),
+    );
+  } catch {
+    return null;
   }
-  return null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -156,6 +158,7 @@ async function lookupDictionary(word: string): Promise<{ phonetic?: string; sens
   try {
     const data = (await fetchJson(
       `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`,
+      1500,
     )) as DictApiEntry[];
     if (!Array.isArray(data) || !data.length) return { senses: [] };
 
@@ -200,15 +203,6 @@ export async function translate(rawText: string, target: string): Promise<Transl
     kind === "word" ? lookupDictionary(text.replace(/[’']s$/i, "")) : Promise.resolve({ senses: [] }),
   ]);
 
-  const senses = dict.senses;
-
-  // Translate the primary English definition too, so a learner who cannot read
-  // the English gloss still gets the explanation in their own language.
-  if (senses.length) {
-    const primary = await machineTranslate(senses[0].definition, target).catch(() => null);
-    if (primary) senses[0].definitionKk = primary.translation;
-  }
-
   const result: TranslateResult = {
     text,
     kind,
@@ -216,10 +210,10 @@ export async function translate(rawText: string, target: string): Promise<Transl
     translation: mt?.translation ?? "",
     provider: mt?.provider ?? "none",
     phonetic: "phonetic" in dict ? dict.phonetic : undefined,
-    senses,
+    senses: dict.senses,
     error: mt ? undefined : "Translation services are unreachable right now.",
   };
 
-  if (mt || senses.length) await writeCache(text, target, result);
+  if (mt || dict.senses.length) await writeCache(text, target, result);
   return result;
 }

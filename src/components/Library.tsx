@@ -106,7 +106,16 @@ export default function Library() {
       </section>
 
       {/* upload */}
-      <div
+      <label
+        htmlFor="book-file-input"
+        role="button"
+        tabIndex={uploading ? -1 : 0}
+        aria-disabled={uploading}
+        onKeyDown={(e) => {
+          if (uploading || (e.key !== "Enter" && e.key !== " ")) return;
+          e.preventDefault();
+          inputRef.current?.click();
+        }}
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -118,7 +127,7 @@ export default function Library() {
           const file = e.dataTransfer.files?.[0];
           if (file) void upload(file);
         }}
-        className={`mb-5 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-md border border-dashed px-5 py-5 transition-colors ${
+        className={`mb-5 flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-3 rounded-md border border-dashed px-5 py-5 transition-colors outline-none focus-visible:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[color-mix(in_srgb,var(--accent)_25%,transparent)] ${
           dragging
             ? "border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_7%,transparent)]"
             : "border-[var(--border-strong)]"
@@ -138,20 +147,22 @@ export default function Library() {
             <span className="hidden sm:inline"> Or drag one onto this box.</span>
           </p>
         </div>
-        <button className="btn" onClick={() => inputRef.current?.click()} disabled={uploading}>
+        <span className="btn" aria-hidden="true">
           Choose a file
-        </button>
+        </span>
         <input
+          id="book-file-input"
           ref={inputRef}
           type="file"
           accept=".epub,.pdf,.txt,.md,.srt,.vtt"
+          disabled={uploading}
           hidden
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (file) void upload(file);
           }}
         />
-      </div>
+      </label>
 
       {/* Anything readable on the web is fair game too — the article is pulled
           out of the page and stored like any other book. */}

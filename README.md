@@ -100,8 +100,8 @@ first request after the deploy, and nobody is signed out.
 - Every word is its own tap target. Tapping opens a card with the translation,
   IPA pronunciation, a 🔊 button (browser speech synthesis), dictionary senses,
   usage examples, synonyms, and how many times the word occurs in this book.
-- The first English definition is also translated, so you are never stuck
-  reading an explanation in the language you are still learning.
+- English dictionary definitions and examples appear when the dictionary
+  service responds quickly enough, without holding up the translation itself.
 - The card offers **"Translate the whole sentence"** for the sentence the word
   sits in, and highlighting any passage translates that passage directly.
 - **Read aloud** (`▶`) speaks the chapter with the current word highlighted,

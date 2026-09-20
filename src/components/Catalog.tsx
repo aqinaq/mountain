@@ -49,8 +49,8 @@ export default function Catalog() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError("");
-    // Straight to gutendex from here rather than through our own server: it
-    // refuses the deployment's address and accepts the reader's.
+    // The app's route reads Gutenberg's official OPDS feed. Keeping the remote
+    // request server-side avoids catalog CORS failures in the browser.
     searchCatalog(query, page)
       .then((data) => {
         if (id !== reqId.current) return; // a newer search superseded this one
@@ -80,7 +80,8 @@ export default function Catalog() {
       const res = await fetch("/api/catalog/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // The whole description, because the server cannot look it up itself.\n        body: JSON.stringify(book),
+        // The whole description, because the server cannot look it up itself.
+        body: JSON.stringify(book),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Import failed.");
@@ -194,7 +195,9 @@ export default function Catalog() {
                         )}
                       </button>
                       <span className="text-[11px] text-[var(--text-dim)]">
-                        {b.downloadCount.toLocaleString()} downloads
+                        {b.downloadCount
+                          ? `${b.downloadCount.toLocaleString()} downloads`
+                          : "Project Gutenberg"}
                       </span>
                     </>
                   )}

@@ -70,18 +70,19 @@ function apply(theme: Theme) {
 }
 
 export default function ThemeToggle() {
-  // Lazy initialiser rather than an effect, so the button agrees with the
-  // attribute the inline script already set. The icon is marked
-  // suppressHydrationWarning because the server cannot know the stored value.
-  const [theme, setTheme] = useState<Theme>(() =>
-    typeof window === "undefined" ? DEFAULT_THEME : readStored(),
-  );
+  // The first client render must match the server. The inline layout script
+  // has already painted the stored palette, and this layout effect updates the
+  // button's label/icon before the browser paints the hydrated tree.
+  const [theme, setTheme] = useState<Theme>(DEFAULT_THEME);
 
-  // React's dev-only remount resets the attributes on <html>, wiping what the
-  // inline script set. Re-applying before paint is a no-op in production.
   useLayoutEffect(() => {
-    apply(theme);
-  }, [theme]);
+    const stored = readStored();
+    // localStorage is the external source of truth; this runs after hydration
+    // so the initial client markup still matches the server.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTheme(stored);
+    apply(stored);
+  }, []);
 
   const cycle = useCallback(() => {
     setTheme((prev) => {

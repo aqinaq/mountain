@@ -33,11 +33,17 @@ export async function POST(req: Request) {
     if (result.kind === "word") {
       const base = lemma(text);
       const bookId = Number(body.bookId);
+      const [known, occurrences] = await Promise.all([
+        isKnown(userId, [base]),
+        Number.isInteger(bookId)
+          ? occurrencesInBook(userId, bookId, text)
+          : Promise.resolve(0),
+      ]);
       return NextResponse.json({
         ...result,
         lemma: base,
-        known: (await isKnown(userId, [base])).has(base),
-        occurrences: Number.isInteger(bookId) ? await occurrencesInBook(userId, bookId, text) : 0,
+        known: known.has(base),
+        occurrences,
       });
     }
 

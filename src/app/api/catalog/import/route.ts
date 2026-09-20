@@ -10,10 +10,9 @@ export const maxDuration = 120;
 /**
  * Import a catalogue book the browser has already looked up.
  *
- * The lookup cannot happen here: gutendex answers this deployment with 403 and
- * the reader's own browser with 200, so the browser does that half and hands
- * over what it found. Fetching the book itself stays here, because
- * gutenberg.org sends no CORS headers and a browser cannot reach it.
+ * The catalog route already returned this description from Gutenberg's OPDS
+ * feed. Fetching the book itself stays here, because Gutenberg sends no CORS
+ * headers and a browser cannot reach it directly.
  *
  * That makes the download addresses input rather than something we looked up,
  * which is the one part that has to be checked.
