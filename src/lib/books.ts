@@ -229,17 +229,50 @@ export async function ingestBuffer(
   const ext = (path.extname(fileName).slice(1) || "txt").toLowerCase();
   const base = path.basename(fileName, path.extname(fileName)).replace(/[_-]+/g, " ").trim();
 
-  if (ext === "epub") return { parsed: await parseEpub(buffer), ext };
-  if (ext === "pdf") return { parsed: await parsePdf(buffer, base || "Untitled"), ext };
-  if (ext === "srt" || ext === "vtt") {
-    return { parsed: parseSubtitles(buffer.toString("utf8"), base || "Subtitles"), ext };
+  if (!["epub", "pdf", "srt", "vtt", "txt", "text", "md"].includes(ext)) {
+    throw new Error(
+      `Unsupported file type ".${ext}". Choose an EPUB, PDF, TXT, Markdown, SRT, or VTT file.`,
+    );
   }
-  if (ext === "txt" || ext === "text" || ext === "md") {
-    return { parsed: parseText(buffer.toString("utf8"), base || "Untitled"), ext: "txt" };
+
+  try {
+    if (ext === "epub") return { parsed: await parseEpub(buffer), ext };
+    if (ext === "pdf") return { parsed: await parsePdf(buffer, base || "Untitled"), ext };
+
+    let text: string;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    } catch {
+      throw new Error("This text file is not valid UTF-8. Save it as UTF-8 and try again.");
+    }
+    if (text.includes("\u0000")) {
+      throw new Error("This looks like a binary file, not readable text.");
+    }
+    if (ext === "srt" || ext === "vtt") {
+      return { parsed: parseSubtitles(text, base || "Subtitles"), ext };
+    }
+    return { parsed: parseText(text, base || "Untitled"), ext: "txt" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (
+      /no readable|no selectable|need OCR|not valid UTF-8|binary file|valid EPUB/i.test(message)
+    ) {
+      throw error;
+    }
+    if (ext === "epub") {
+      throw new Error("This EPUB is damaged or incomplete and could not be opened.", { cause: error });
+    }
+    if (ext === "pdf") {
+      const protectedPdf = /password/i.test(message);
+      throw new Error(
+        protectedPdf
+          ? "This PDF is password-protected. Remove the password and try again."
+          : "This PDF is damaged or is not a valid PDF.",
+        { cause: error },
+      );
+    }
+    throw error;
   }
-  throw new Error(
-    `Unsupported file type ".${ext}". Upload an EPUB, PDF, TXT, or subtitle (SRT/VTT) file.`,
-  );
 }
 
 /* ------------------------------ web articles ------------------------------ */
@@ -253,6 +286,9 @@ export async function importFromUrl(userId: number, url: string): Promise<number
     normalized = new URL(url.trim()).toString();
   } catch {
     throw new Error("That does not look like a web address.");
+  }
+  if (!/^https?:/i.test(normalized)) {
+    throw new Error("The article address must begin with http:// or https://.");
   }
 
   // Scoped to the reader: "already imported" has to mean already in *your*

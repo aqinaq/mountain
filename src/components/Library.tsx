@@ -2,16 +2,36 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { BookSummary } from "@/lib/books";
 import { formatWords, readingTime, relativeTime } from "@/lib/format";
 import DeviceLink from "./DeviceLink";
 
-export default function Library() {
+type ImportError = {
+  source: "file" | "article" | "library" | "demo";
+  title: string;
+  message: string;
+  hint?: string;
+};
+
+const MAX_FILE_BYTES = 4 * 1024 * 1024;
+const SUPPORTED_EXTENSIONS = new Set(["epub", "pdf", "txt", "text", "md", "srt", "vtt"]);
+
+async function responseJson(res: Response): Promise<Record<string, unknown>> {
+  const type = res.headers.get("content-type") ?? "";
+  if (!type.includes("application/json")) return {};
+  return (await res.json()) as Record<string, unknown>;
+}
+
+function messageFrom(data: Record<string, unknown>, fallback: string): string {
+  return typeof data.error === "string" ? data.error : fallback;
+}
+
+export default function Library({ initialBooks }: { initialBooks: BookSummary[] }) {
   const router = useRouter();
-  const [books, setBooks] = useState<BookSummary[] | null>(null);
+  const [books, setBooks] = useState(initialBooks);
   const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ImportError | null>(null);
   const [dragging, setDragging] = useState(false);
   const [url, setUrl] = useState("");
   const [importing, setImporting] = useState(false);
@@ -20,29 +40,60 @@ export default function Library() {
 
   const load = useCallback(async () => {
     const res = await fetch("/api/books");
-    const data = await res.json();
-    setBooks(data.books ?? []);
+    const data = await responseJson(res);
+    if (!res.ok) throw new Error(messageFrom(data, "Your library could not be refreshed."));
+    setBooks(Array.isArray(data.books) ? (data.books as BookSummary[]) : []);
   }, []);
-
-  // Load-on-mount: every setState happens after the await, not during render.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load();
-  }, [load]);
 
   const upload = useCallback(
     async (file: File) => {
+      // Allow choosing the same file again after a client-side validation error.
+      if (inputRef.current) inputRef.current.value = "";
+      const extension = file.name.includes(".") ? file.name.split(".").pop()?.toLowerCase() ?? "" : "";
+      if (!SUPPORTED_EXTENSIONS.has(extension)) {
+        setError({
+          source: "file",
+          title: "This file type is not supported",
+          message: extension ? `“.${extension}” files cannot be imported.` : "This file has no extension.",
+          hint: "Choose an EPUB, PDF, TXT, Markdown, SRT, or VTT file.",
+        });
+        return;
+      }
+      if (file.size === 0) {
+        setError({
+          source: "file",
+          title: "This file is empty",
+          message: "There is no content to import.",
+          hint: "Choose a different copy of the document.",
+        });
+        return;
+      }
+      if (file.size > MAX_FILE_BYTES) {
+        setError({
+          source: "file",
+          title: "This file is too large",
+          message: `${(file.size / 1048576).toFixed(1)} MB exceeds the 4 MB upload limit.`,
+          hint: "Use a smaller file or split the document before importing it.",
+        });
+        return;
+      }
+
       setUploading(true);
-      setError("");
+      setError(null);
       try {
         const form = new FormData();
         form.append("file", file);
         const res = await fetch("/api/upload", { method: "POST", body: form });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Upload failed.");
+        const data = await responseJson(res);
+        if (!res.ok) throw new Error(messageFrom(data, "The file could not be imported."));
         await load();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Upload failed.");
+        setError({
+          source: "file",
+          title: "The file could not be imported",
+          message: err instanceof Error ? err.message : "The upload failed.",
+          hint: "Check that the file opens normally, then try again. Scanned PDFs need OCR.",
+        });
       } finally {
         setUploading(false);
         if (inputRef.current) inputRef.current.value = "";
@@ -54,20 +105,37 @@ export default function Library() {
   const importUrl = useCallback(async () => {
     const address = url.trim();
     if (!address) return;
+    try {
+      const parsed = new URL(address);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error();
+    } catch {
+      setError({
+        source: "article",
+        title: "Enter a complete article URL",
+        message: "The address must begin with http:// or https://.",
+        hint: "Copy the address from your browser’s address bar and try again.",
+      });
+      return;
+    }
     setImporting(true);
-    setError("");
+    setError(null);
     try {
       const res = await fetch("/api/import/url", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: address }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "That page could not be imported.");
+      const data = await responseJson(res);
+      if (!res.ok) throw new Error(messageFrom(data, "That page could not be imported."));
       setUrl("");
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "That page could not be imported.");
+      setError({
+        source: "article",
+        title: "The article could not be imported",
+        message: err instanceof Error ? err.message : "The page could not be read.",
+        hint: "Try the article’s canonical URL. Paywalls and pages that require JavaScript are not supported.",
+      });
     } finally {
       setImporting(false);
     }
@@ -75,14 +143,18 @@ export default function Library() {
 
   const openDemo = useCallback(async () => {
     setDemoing(true);
-    setError("");
+    setError(null);
     try {
       const res = await fetch("/api/demo", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "The sample could not be opened.");
+      const data = await responseJson(res);
+      if (!res.ok) throw new Error(messageFrom(data, "The sample could not be opened."));
       router.push(`/read/${Number(data.id)}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "The sample could not be opened.");
+      setError({
+        source: "demo",
+        title: "The sample could not be opened",
+        message: err instanceof Error ? err.message : "Please try again.",
+      });
       setDemoing(false);
     }
   }, [router]);
@@ -90,8 +162,19 @@ export default function Library() {
   const remove = useCallback(
     async (book: BookSummary) => {
       if (!confirm(`Remove “${book.title}” from your library? This cannot be undone.`)) return;
-      await fetch(`/api/books/${book.id}`, { method: "DELETE" });
-      await load();
+      setError(null);
+      try {
+        const res = await fetch(`/api/books/${book.id}`, { method: "DELETE" });
+        const data = await responseJson(res);
+        if (!res.ok) throw new Error(messageFrom(data, "The book could not be removed."));
+        await load();
+      } catch (err) {
+        setError({
+          source: "library",
+          title: "The book was not removed",
+          message: err instanceof Error ? err.message : "Please try again.",
+        });
+      }
     },
     [load],
   );
@@ -144,7 +227,7 @@ export default function Library() {
             that assumes one is kept, but as the aside it is on a phone. */}
         <div className="min-w-0 flex-1">
           <p className="text-sm">
-            {uploading ? "Reading your book…" : "Add an EPUB, PDF, TXT, or subtitle file"}
+            {uploading ? "Reading your book…" : "Add an EPUB, PDF, TXT, Markdown, or subtitle file"}
           </p>
           <p className="mt-0.5 text-xs text-[var(--text-dim)]">
             Up to 4 MB. Files are kept in your library, not shared.
@@ -159,35 +242,66 @@ export default function Library() {
       {/* Anything readable on the web is fair game too — the article is pulled
           out of the page and stored like any other book. */}
       <form
-        className="mb-10 flex items-end gap-3"
+        className="mb-4 flex items-end gap-3"
         onSubmit={(e) => {
           e.preventDefault();
           void importUrl();
         }}
       >
-        <input
-          className="field flex-1"
-          type="url"
-          placeholder="…or paste a link to an article"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          disabled={importing}
-        />
+        <div className="min-w-0 flex-1">
+          <label htmlFor="article-url" className="mb-1 block text-xs font-medium text-[var(--text-dim)]">
+            Article URL
+          </label>
+          <input
+            id="article-url"
+            className="field"
+            type="url"
+            inputMode="url"
+            autoComplete="url"
+            placeholder="https://example.com/article"
+            aria-describedby="article-url-help"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            disabled={importing}
+          />
+          <span id="article-url-help" className="sr-only">
+            Paste the complete address of a publicly accessible article.
+          </span>
+        </div>
         <button className="btn" type="submit" disabled={importing || !url.trim()}>
           {importing ? <span className="spin inline-block">◌</span> : "Import"}
         </button>
       </form>
 
+      <details className="mb-10 border-l-2 border-[var(--border)] py-1 pl-3 text-xs leading-relaxed text-[var(--text-dim)]">
+        <summary className="cursor-pointer font-medium text-[var(--text)]">Storage, privacy, and retention</summary>
+        <div className="mt-2 max-w-2xl space-y-2">
+          <p>
+            Your original upload, parsed chapters, reading progress, and saved vocabulary are stored in the app’s database and tied to this browser by a private session cookie. Article imports also store the source URL.
+          </p>
+          <p>
+            Files are not public or shared with other readers. When you request an explanation, only the selected word or passage is sent to the translation and dictionary providers—not the whole book.
+          </p>
+          <p>
+            There is no automatic expiry. Removing a book deletes its original file, chapters, search index, and progress; vocabulary you saved from it remains for review until you delete that vocabulary.
+          </p>
+        </div>
+      </details>
+
       {error && (
-        <p className="mb-6 border-l-2 border-[var(--danger)] py-1 pl-3 text-sm text-[var(--danger)]">
-          {error}
-        </p>
+        <div
+          className="mb-6 rounded-md border border-[color-mix(in_srgb,var(--danger)_35%,var(--border))] bg-[color-mix(in_srgb,var(--danger)_5%,transparent)] px-4 py-3 text-sm"
+          role="alert"
+          aria-live="assertive"
+        >
+          <p className="font-medium text-[var(--danger)]">{error.title}</p>
+          <p className="mt-1 text-[var(--text)]">{error.message}</p>
+          {error.hint && <p className="mt-1 text-xs text-[var(--text-dim)]">{error.hint}</p>}
+        </div>
       )}
 
       {/* shelf */}
-      {books === null ? (
-        <p className="py-12 text-sm text-[var(--text-dim)]">Loading…</p>
-      ) : books.length === 0 ? (
+      {books.length === 0 ? (
         <div className="sheet">
           <p className="eyebrow mb-3">Start reading</p>
           <h2 className="display text-[1.5rem]">Try a short story</h2>
